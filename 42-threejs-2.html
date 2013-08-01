@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8" />
+	<title>Forty Two Three.js</title>
+	<style>
+		body 
+		{
+			font-family: Monospace;
+			font-weight: bold;
+			background-color: #ccccff;
+			margin: 0px;
+			overflow: hidden;
+		}
+	</style>
+</head>
+<body>
+
+<!--<script type="text/javascript" src="js/three.min.js"></script>-->
+<script type="text/javascript" src="js/three.js"></script>
+<script type="text/javascript" src="jQuery/includes/1.6/jquery-1.6.1.min.js"></script>
+<script type="text/javascript" src="jQuery/includes/jquery.csv-0.61.min.js"></script>
+<!--<script type="text/javascript" src="42-datalayer.js"></script>-->
+<script type="text/javascript" src="42-tfl.js"></script>
+<!--<script type="text/javascript" src="42-geojson.js"></script>-->
+<!--<script type="text/javascript" src="42-staticdatalayer.js"></script>-->
+<script type="text/javascript" src="js/controls/FlyControls.js"></script>
+<script type="text/javascript" src="js/loaders/ColladaLoader.js"></script>
+<script type="text/javascript" src="js/stats.min.js"></script>
+<!--<script src="http://javascript.poly2tri.googlecode.com/hg/lib/js/Namespace.min.js"></script>-->
+<!--<script src="http://javascript.poly2tri.googlecode.com/hg/src/js/poly2tri.js"></script>-->
+<script type="text/javascript" src="js/poly2tri.js"></script>
+<script type="text/javascript">
+
+//http://loggerhead.casa.ucl.ac.uk/api.svc/f/trackernet?pattern=trackernet_*.csv
+//http://loggerhead.casa.ucl.ac.uk/api.svc/f/countdown?pattern=countdown_*.csv
+
+var FOV = 45; //field of view
+var nearClip = 1; //near clip plane
+var farClip = 10000; //far clip plane
+
+var centreLat = 51.4875, centreLon = -0.0885; //this is the point we're looking at
+var wgs84_a = 6378137; //semi-major axis
+var wgs84_f = 1/298.257223563; //flattening
+var wgs84_b = wgs84_a*(1-wgs84_f); //semi-minor
+
+var camera, controls, scene, renderer;
+var geometry, material, mesh;
+var earth, latLonGridLines;
+//var dataBounds = new THREE.Box3(); //box enclosing all data loaded through loadColladaWorld
+var dataLayers = []; //anim layers holding data
+
+/** Mouse coordinates values for mouse events */
+var mouseDown = false;
+var earthDragPoint = new THREE.Vector3(); //point on earth where mouse down happened
+var earthDragRotation = new THREE.Vector3(); //earth rotation at the point when mouse down happened
+
+//clock used for controls update
+var clock = new THREE.Clock();
+
+/** Collision detection globals */
+var projector = new THREE.Projector();
+
+
+var windowHalfX = window.innerWidth / 2;
+var windowHalfY = window.innerHeight / 2;
+
+var stats; //the HUD as an html overlay
+
+init();
+animate();
+
+function init() {
+//http://mathworld.wolfram.com/SphericalCoordinates.html?affilliate=1
+	
+	//was 75 degrees
+	camera = new THREE.PerspectiveCamera( FOV, window.innerWidth / window.innerHeight, nearClip, farClip );
+	//camera.position.z = 1000;
+	camera.position.z = 11000; //9000
+	
+	scene = new THREE.Scene();
+	//scene.fog = new THREE.Fog( 0xffffff, 0, 750 );
+	
+	//lights
+	scene.add( new THREE.AmbientLight( 0xcccccc ) );
+	//var pointLight = new THREE.PointLight(0xFFFFFF);
+	//pointLight.position.x = 0;
+	//pointLight.position.y = 0;
+	//pointLight.position.z = 11000;
+	//scene.add(pointLight);
+	var directionalLight = new THREE.DirectionalLight(0xffffff);
+	//directionalLight.position.set(0,0,1).normalize();
+	directionalLight.position.set(0,1,0).normalize();
+	//directionalLight.position.x = 0;
+	//directionalLight.position.y = 0;
+	//directionalLight.position.z = 1;
+	//directionalLight.position.normalize();
+	scene.add(directionalLight);
+
+	
+	
+	//add sphere representing the world
+	//THREE.SphereGeometry(radius, segmentsWidth, segmentsHeight);
+	//using WGS84 spheroid divided by 100 which matches the data in ECEF at scale 1/1000
+	//earth = new THREE.Mesh(
+	//	new THREE.SphereGeometry(wgs84_a/1000, 36, 18), //36,18=10 degree faces
+	//	//new THREE.MeshBasicMaterial( { color: 0x0000ff, wireframe: false } )
+	//	//new THREE.MeshLambertMaterial({color: 0x0000ff, wireframe: true})
+	//	//0x7CCD7C
+	//	//new THREE.MeshLambertMaterial({color: 0x020202, ambient: 0x71C671, wireframe: false})
+	//	new THREE.MeshLambertMaterial({color: 0x202020, ambient: 0xDFEEF5, wireframe: false})
+	//);
+	//earth.overdraw = true; //what does this do?
+	//OK, so the Earth is square...
+	earth = new THREE.Mesh(
+		new THREE.CubeGeometry(1,1,1),
+		new THREE.MeshLambertMaterial({color: 0x202020, ambient: 0xDFEEF5, wireframe: false})
+	);
+	scene.add(earth);
+	
+	//10 degree Lat Lon grid squares which are overlayed on the earth sphere
+	//latLonGridLines = new THREE.Mesh(
+	//	new THREE.SphereGeometry(wgs84_a/1000, 36, 18),
+	//	new THREE.MeshBasicMaterial({color: 0xffffff, wireframe: true})
+	//);
+	//earth.add(latLonGridLines);
+	
+	//loadColladaWorld('data/London_dt_2001_area_CARTESIAN.DAE');
+	//loadColladaWorld('data/TQ_Building_530000_180000_CARTESIAN.DAE');
+	//loadColladaWorld('data/TQ_TidalWater_530000_180000_CARTESIAN.DAE');
+	//loadColladaWorld('data/TQ_TidalWater_503500_155500_CARTESIAN.DAE');
+	//THIS ONE! loadGeoJSONWorld('data/TM_WORLD_BORDERS_SIMPL-0.3_WGS84.geojson', 0x338800);
+	//loadGeoJSONWorld('data/TQ_Building_530000_180000_WGS84.geojson', 0x888888);
+	//loadTubes();
+	//loadBuses();
+	
+	//initialisation: add data layers here
+	dataLayers.push(Object.create(TubeDataLayer));
+	//dataLayers.push(TubeDataLayer);
+	//dataLayers.push(Object.create(StaticDataLayer).setURL('data/TQ_Building_530000_180000_CARTESIAN.DAE'));
+	//dataLayers.push(Object.create(StaticDataLayer).setURL('data/TQ_TidalWater_503500_155500_CARTESIAN.DAE'));
+	//dataLayers.push(Object.create(StaticDataLayer).setURL('data/TM_WORLD_BORDERS_SIMPL-0.3_WGS84.geojson'));
+	
+	//load data for all layers
+	for (var i=0; i<dataLayers.length; i++)
+		dataLayers[i].load(earth,updateCamera);
+
+	//don't forget this red wireframe cube is at the origin!!!!
+	geometry = new THREE.CubeGeometry( 200, 200, 200 );
+	material = new THREE.MeshBasicMaterial( { color: 0xff0000, wireframe: true } );
+	
+	mesh = new THREE.Mesh( geometry, material );
+	scene.add( mesh );
+	
+	//renderer = new THREE.CanvasRenderer();
+	renderer = new THREE.WebGLRenderer( { antialias: true, clearColor: 0x000000, clearAlpha: 1 } );
+	renderer.setSize( window.innerWidth, window.innerHeight );
+	
+	document.body.appendChild( renderer.domElement );
+	//var container = document.getElementById('container');
+	//container.appendChild( renderer.domElement );
+	
+	// STATS
+	stats = new Stats();
+	stats.domElement.style.position = 'absolute';
+	stats.domElement.style.bottom = '0px';
+	stats.domElement.style.zIndex = 100;
+	document.body.appendChild( stats.domElement );
+	
+	//controls
+	controls = new THREE.FlyControls( camera );
+	controls.movementSpeed=100;
+	controls.domElement = renderer.domElement;
+	controls.rollSpeed = Math.PI/24;
+	controls.autoForward = false;
+	controls.dragToLook = false;
+	
+	//new event handlers
+	//renderer.domElement.addEventListener('DOMMouseScroll', mousewheel, false); //does this work with any browsers?
+	renderer.domElement.addEventListener( 'mousewheel', mousewheel, false);
+	renderer.domElement.addEventListener( 'mousedown', onDocumentMouseDown, false );
+	renderer.domElement.addEventListener( 'mouseup', onDocumentMouseUp, false );
+	renderer.domElement.addEventListener( 'mouseout', onDocumentMouseOut, false );
+	document.addEventListener( 'keydown', onKeyDown, false );
+}
+
+/**
+* Update the camera to look straight at the centre of the dataBounds box, with the whole box in the viewport
+*
+*/
+/*function updateCamera() {
+	var x1=dataBounds.min.x,
+		x2=dataBounds.max.x,
+		y1=dataBounds.min.y,
+		y2=dataBounds.max.y,
+		z1=dataBounds.min.z,
+		z2=dataBounds.max.z;
+	//find centre of x, y and z axes which is the centre on the earth sphere (z is height)
+	var cx=(x1+x2)/2;
+	var cy=(y1+y2)/2;
+	var cz=(z1+z2)/2;
+	var v = new THREE.Vector3(cx,cy,cz); //vector from origin to point we want to look at on surface
+	v.normalize();
+	var camera_pos = v.multiplyScalar(11000); //put camera at a fixed altitude - need to fix this later
+	//move the camera to the new position
+	camera.position.x=camera_pos.x;
+	camera.position.y=camera_pos.y;
+	camera.position.z=camera_pos.z;
+	//and look at the origin, which means we look at the data (it's along the same vector)
+	//you could look at this instead, but the origin is easier: new THREE.Vector3(cx,cy,wgs84_a/1000));
+	camera.lookAt(new THREE.Vector3(0,0,0));
+}*/
+function updateCamera() {
+	//second version which centres the camera on the data that's currently loaded - used as callback for layers as they load
+	var dataBounds = new THREE.Box3();
+	for (var i=0; i<dataLayers.length; i++) {
+		if (dataLayers[i].bbox!=null) dataBounds.union(dataLayers[i].bbox);
+	}
+	//console.log("UpdateCamera",dataBounds);
+	var x1=dataBounds.min.x,
+		x2=dataBounds.max.x,
+		y1=dataBounds.min.y,
+		y2=dataBounds.max.y,
+		z1=dataBounds.min.z,
+		z2=dataBounds.max.z;
+	//find centre of x, y and z axes which is the centre on the earth sphere (z is height)
+	var cx=(x1+x2)/2;
+	var cy=(y1+y2)/2;
+	var cz=(z1+z2)/2;
+	var size=Math.max(x2-x1,y2-y1,z2-z1); //size of maximum diemnsion
+	//var d = size/2*Math.tan(FOV/2); //distance camera needs to be from object to get it all in
+	var d = size*nearClip/window.innerWidth;
+	var alt = wgs84_a/1000+d; //altifude from centre of earth
+	var v = new THREE.Vector3(cx,cy,cz); //vector from origin to point we want to look at on surface
+	v.normalize();
+	var camera_pos = v.multiplyScalar(alt/*7000*//*11000*/); //put camera at a fixed altitude - need to fix this later
+	//move the camera to the new position
+	camera.position.x=camera_pos.x;
+	camera.position.y=camera_pos.y;
+	camera.position.z=camera_pos.z;
+	//and look at the origin, which means we look at the data (it's along the same vector)
+	//you could look at this instead, but the origin is easier: new THREE.Vector3(cx,cy,wgs84_a/1000));
+	camera.lookAt(new THREE.Vector3(0,0,0));
+}
+
+//UI///////////////////////////////////
+function onWindowResize() {
+	windowHalfX = window.innerWidth / 2;
+	windowHalfY = window.innerHeight / 2;
+	
+	camera.aspect = window.innerWidth / window.innerHeight;
+	camera.updateProjectionMatrix();
+	
+	renderer.setSize( window.innerWidth, window.innerHeight );
+}
+
+/** Event fired when the mouse button is pressed down */
+function onDocumentMouseDown(event) {
+	event.preventDefault();
+	
+	mouseDown=true;
+	
+	var vector = new THREE.Vector3(
+		(event.clientX/window.innerWidth)*2-1,
+		-(event.clientY/window.innerHeight)*2+1,
+		0.5
+	);
+	projector.unprojectVector( vector, camera );
+	
+	//check for intersection with tube objects - maybe we could do this better?
+	var raycaster = new THREE.Raycaster( camera.position, vector.sub( camera.position ).normalize() );
+	var intersectsTubes = raycaster.intersectObjects(earth.children,true); //true=recurse
+	if (intersectsTubes.length>0) {
+		//console.log(intersectsTubes);
+		for (var i=0; i<intersectsTubes.length; i++)
+			console.log("Clicked: "+intersectsTubes[i].object.name);
+			//console.log(intersectsTubes[i]);
+	}
+	
+	var intersects = raycaster.intersectObject(earth); //was intersectObjects
+	if ( intersects.length > 0 ) {
+		//remember that the intersect point is actually the planar face intersection, so recalculate the z coordinate
+		//based on the WGS spheroid radius
+		var surfacePoint = intersects[0].point;
+		//is it better to drag the actual model, or the idealised sphere (below)?
+		surfacePoint.z=Math.sqrt((wgs84_a/1000)*(wgs84_a/1000)-surfacePoint.x*surfacePoint.x-surfacePoint.y*surfacePoint.y);
+		earthDragPoint.set(surfacePoint.x,surfacePoint.y,surfacePoint.z);
+		earthDragRotation.set(earth.rotation.x,earth.rotation.y,earth.rotation.z);
+		//console.log("Hit the earth at: "+earthDragPoint.x+","+earthDragPoint.y+","+earthDragPoint.z);
+		//hook in the move listener for the drag
+		renderer.domElement.addEventListener( 'mousemove', onDocumentMouseMove, false );
+	}
+}
+
+/** Removes event listeners when the mouse button is let go */
+function onDocumentMouseUp(event) {
+	event.preventDefault();
+	
+	earthDragPoint.set(0,0,0);
+	//unhook the move handler
+	renderer.domElement.removeEventListener( 'mousemove', onDocumentMouseMove, false );
+	
+	mouseDown = false;
+}
+
+/** This event handler is only fired after the mouse down event and
+    before the mouse up event and only when the mouse moves */
+function onDocumentMouseMove(event) {
+	event.preventDefault();
+	
+	var vector = new THREE.Vector3(
+		(event.clientX/window.innerWidth)*2-1,
+		-(event.clientY/window.innerHeight)*2+1,
+		0.5
+	);
+	projector.unprojectVector( vector, camera );
+	
+	var raycaster = new THREE.Raycaster( camera.position, vector.sub( camera.position ).normalize() );
+	
+	var intersects = raycaster.intersectObject(earth); //was intersectObjects
+	if ( intersects.length > 0 ) {
+		//remember that the intersect point is actually the planar face intersection, so recalculate the z coordinate
+		//based on the WGS spheroid radius
+		var surfacePoint = intersects[0].point;
+		//is it better to drag the actual model, or the idealised sphere (below)?
+		surfacePoint.z=Math.sqrt((wgs84_a/1000)*(wgs84_a/1000)-surfacePoint.x*surfacePoint.x-surfacePoint.y*surfacePoint.y);
+		//now calculate deltas between the click point and the current mouse surface position
+		var delta = surfacePoint.sub(earthDragPoint);
+		var Phi = Math.acos(delta.y/(wgs84_a/1000))-Math.PI/2;
+		//calculate Theta on base triangle using hypot calculated from sqrt(radius^2 - dy^2) on Phi triangle
+		var hy=Math.sqrt((wgs84_a/1000)*(wgs84_a/1000)-delta.y*delta.y);
+		var Theta = Math.asin(delta.x/hy);
+		earth.rotation.x=earthDragRotation.x+Phi;
+		earth.rotation.y=earthDragRotation.y+Theta;
+		//earth.updateMatrix();
+		//earthDragPoint = surfacePoint;
+	}
+}
+
+
+/** Removes event listeners if the mouse runs off the renderer */
+function onDocumentMouseOut(event) {
+	event.preventDefault();
+	
+	renderer.domElement.removeEventListener( 'mousemove', onDocumentMouseMove, false );
+	earthDragPoint.set(0,0,0);
+	mouseDown = false;
+}
+
+/** Handles zoom in and out with the wheel */
+function mousewheel( event )
+{
+	//var amount = 100; // parameter
+	//
+	//// get wheel direction
+	//var d = ((typeof e.wheelDelta != "undefined")?(-e.wheelDelta):e.detail);
+	//d = 100 * ((d>0)?1:-1);
+	//
+	//// do calculations, I'm not using any three.js internal methods here, maybe there is a better way of doing this
+	//// applies movement in the direction of (0,0,0), assuming this is where the camera is pointing
+	//var cPos = camera.position;
+	//var r = cPos.x*cPos.x + cPos.y*cPos.y;
+	//var sqr = Math.sqrt(r);
+	//var sqrZ = Math.sqrt(cPos.z*cPos.z + r);
+	//
+	//var nx = cPos.x + ((r==0)?0:(d * cPos.x/sqr));
+	//var ny = cPos.y + ((r==0)?0:(d * cPos.y/sqr));
+	//var nz = cPos.z + ((sqrZ==0)?0:(d * cPos.z/sqrZ));
+	//
+	//// verify we're applying valid numbers
+	//if (isNaN(nx) || isNaN(ny) || isNaN(nz))
+	//	return;
+	//	
+	//cPos.x = nx;
+	//cPos.y = ny;
+	//cPos.z = nz;
+	
+	// get wheel direction
+	var d = ((typeof event.wheelDelta != "undefined")?(-event.wheelDelta):event.detail);
+	d = 50 * ((d>0)?1:-1);
+	//camera.position.z+=d;
+	//next attempt...
+	zoomin(d);
+}
+
+function onKeyDown(event) {
+	//38 arrow up, 40 arrow down
+	if (event.keyCode==38) { //arrow up
+		zoomin(-10)
+	}
+	else if (event.keyCode==40) { //arrow down
+		zoomin(10);
+	}
+	else if (event.keyCode==65) { //a key
+		tilt(Math.PI/36);
+	}
+	else if (event.keyCode==90) { //z key
+		tilt(-Math.PI/36);
+	}
+}
+
+/**
+* Zoom camera into the earth using either the mouse wheel or cursor keys
+* @d is the amount to zoom in by (distance)
+*/
+function zoomin(d) {
+	//var h = camera.position.z-wgs84_a/1000; //double minus as both coords negative
+	var h = camera.position.length()-wgs84_a/1000; //more robust formula to calculate altitude of moving camera
+	
+	//console.log("camera="+camera.position.z+" height="+h);
+	d = (h/10) * ((d>0)?1:-1); //distance varies by height
+	//camera.position.z+=d; //move towards the centre of the earth
+	camera.translateZ(d); //move towards where camera is looking (was -d originally)
+}
+
+/**
+* @a angle (radians) to tile the camera by in X axis (up /down)
+*/
+function tilt(a) {
+	camera.rotation.x+=a;
+}
+
+///////////////////////////////////////
+
+function animate() {
+	// note: three.js includes requestAnimationFrame shim
+	requestAnimationFrame( animate );
+	
+	mesh.rotation.x += 0.01;
+	mesh.rotation.y += 0.02;
+	
+	for (var i=0; i<dataLayers.length; i++)
+		dataLayers[i].animate.call(dataLayers[i],earth); //otherwise the datalayer animate is in the scope of the animate event handler!
+	
+	//earth.rotation.y+=0.001;
+	
+	//earth.rotation.y = earth.rotation.y += ( targetRotation - earth.rotation.y ) * 0.005;
+	var delta = clock.getDelta();
+	controls.update(delta);
+	renderer.render( scene, camera );
+	stats.update();
+}
+
+
+/**
+* Compute bounding box of compound Object3D
+*/
+function getCompoundBoundingBox(object3D) {
+	var box = null;
+	object3D.traverse(function (obj3D) {
+		var geometry = obj3D.geometry;
+		if (geometry === undefined) return;
+		geometry.computeBoundingBox();
+		if (box === null) {
+			box = geometry.boundingBox;
+		}
+		else {
+			box.union(geometry.boundingBox);
+		}
+	});
+	return box;
+}
+
+
+
+
+/**
+* Add a wireframe bounding box around an object so you can see where it is.
+* @param o3d The object to add the bounding box for (box gets added to earth, not as a child of o3d)
+* @returns the bounding box object (the box3, not the geometry)
+*/
+function DEBUG_addBoundingBox(o3d) {
+//add a bounding cube marker so we know where geometry is
+		var bbox = getCompoundBoundingBox(o3d);
+		var x1=bbox.min.x,
+			x2=bbox.max.x,
+			y1=bbox.min.y,
+			y2=bbox.max.y,
+			z1=bbox.min.z,
+			z2=bbox.max.z;
+		var bbox_cube = new THREE.Mesh(
+			new THREE.CubeGeometry(x2-x1, y2-y1, z2-z1),
+			new THREE.MeshBasicMaterial( { color: 0xffffff, wireframe: true } )
+		);
+		bbox_cube.position.x=(x1+x2)/2;
+		bbox_cube.position.y=(y1+y2)/2;
+		bbox_cube.position.z=(z1+z2)/2;
+		earth.add(bbox_cube);
+		return bbox;
+}
+
+/**
+ * Convert lon/lat/height coords into xyz and return vector3 object
+*/
+function convertCoords(lon,lat,h) {
+	var Theta = lon * Math.PI / 180.0;
+	var Phi = lat * Math.PI / 180.0;
+	var CosTheta = Math.cos(Theta);
+	var SinTheta = Math.sin(Theta);
+	var CosPhi = Math.cos(Phi);
+	var SinPhi = Math.sin(Phi);
+	var Radius = wgs84_a + h;
+	var x = Radius * CosPhi * SinTheta;
+	var y = Radius * SinPhi;
+	var z = Radius * CosPhi * CosTheta;
+	return new THREE.Vector3(x,y,z);
+}
+
+/**
+ * Go through all points in the Object3D and children recursively and convert the WGS84
+ * coordinates to cartesian.
+*/
+function sphericalToCartesian(object3D) {
+	//An Object3D doesn't have any geometry, but a Mesh does
+	if (object3D.geometry) {
+		for (var i=0; i<object3D.geometry.vertices.length; i++) {
+			var lon = object3D.geometry.vertices[i].x;
+			var lat = object3D.geometry.vertices[i].y;
+			var h = object3D.geometry.vertices[i].z; //z=height from the extrusion
+			var Theta = lon * Math.PI / 180.0;
+            var Phi = lat * Math.PI / 180.0;
+            var CosTheta = Math.cos(Theta);
+            var SinTheta = Math.sin(Theta);
+            var CosPhi = Math.cos(Phi);
+            var SinPhi = Math.sin(Phi);
+			var Radius = wgs84_a + h;
+            var x = Radius * CosPhi * SinTheta;
+            var y = Radius * SinPhi;
+            var z = Radius * CosPhi * CosTheta;
+            object3D.geometry.vertices[i].x=x/1000.0;
+			object3D.geometry.vertices[i].y=y/1000.0;
+			object3D.geometry.vertices[i].z=z/1000.0;
+		}
+		object3D.geometry.verticesNeedUpdate = true;
+		object3D.geometry.normalsNeedUpdate = true;
+		object3D.geometry.elementsNeedUpdate = true;
+		object3D.geometry.buffersNeedUpdate = true;
+		object3D.geometry.computeBoundingBox();
+		object3D.geometry.computeBoundingSphere();
+	}
+	//and recurse...
+	for (var i=0; i<object3D.children.length; i++) {
+		sphericalToCartesian(object3D.children[i]);
+	}
+}
+
+/**
+* Returns the filename from a path, but without the extension
+*/
+function extractFilenameWithoutExtension(path) {
+	var filename = path.split(/(\\|\/)/g).pop();
+	filename = filename.substring(0,filename.lastIndexOf('.'));
+	return filename;
+}
+
+
+</script>
+
+</body>
+
+</html>

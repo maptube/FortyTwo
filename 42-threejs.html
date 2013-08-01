@@ -1,0 +1,1030 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8" />
+	<title>Forty Two Three.js</title>
+	<style>
+		body 
+		{
+			font-family: Monospace;
+			font-weight: bold;
+			background-color: #ccccff;
+			margin: 0px;
+			overflow: hidden;
+		}
+	</style>
+</head>
+<body>
+
+<!--<script type="text/javascript" src="js/three.min.js"></script>-->
+<script type="text/javascript" src="js/three.js"></script>
+<script type="text/javascript" src="js/controls/FlyControls.js"></script>
+<script type="text/javascript" src="js/loaders/ColladaLoader.js"></script>
+<script type="text/javascript" src="js/stats.min.js"></script>
+<!--<script src="http://javascript.poly2tri.googlecode.com/hg/lib/js/Namespace.min.js"></script>-->
+<!--<script src="http://javascript.poly2tri.googlecode.com/hg/src/js/poly2tri.js"></script>-->
+<script type="text/javascript" src="js/poly2tri.js"></script>
+<script type="text/javascript" src="jQuery/includes/1.6/jquery-1.6.1.min.js"></script>
+<script type="text/javascript" src="jQuery/includes/jquery.csv-0.61.min.js"></script>
+<script type="text/javascript">
+
+//http://loggerhead.casa.ucl.ac.uk/api.svc/f/trackernet?pattern=trackernet_*.csv
+//http://loggerhead.casa.ucl.ac.uk/api.svc/f/countdown?pattern=countdown_*.csv
+
+
+var centreLat = 51.4875, centreLon = -0.0885; //this is the point we're looking at
+var wgs84_a = 6378137; //semi-major axis
+var wgs84_f = 1/298.257223563; //flattening
+var wgs84_b = wgs84_a*(1-wgs84_f); //semi-minor
+
+var camera, controls, scene, renderer;
+var geometry, material, mesh;
+var earth, latLonGridLines;
+var dataBounds = new THREE.Box3(); //box enclosing all data loaded through loadColladaWorld
+
+var tube_network=null; //holds origin/destination links for tube network
+var tube_stationcodes = new Array(); //station lat/lon lookup from 3 letter code
+var tube_data = new Array(); //latest data download - this is what we're interpolating away from
+var tube_data_time = null; //this is the time that tube_data is valid for
+
+/** Mouse coordinates values for mouse events */
+var mouseDown = false;
+var earthDragPoint = new THREE.Vector3(); //point on earth where mouse down happened
+var earthDragRotation = new THREE.Vector3(); //earth rotation at the point when mouse down happened
+
+//clock used for controls update
+var clock = new THREE.Clock();
+
+/** Collision detection globals */
+var projector = new THREE.Projector();
+
+
+var windowHalfX = window.innerWidth / 2;
+var windowHalfY = window.innerHeight / 2;
+
+var stats; //the HUD as an html overlay
+
+init();
+animate();
+
+function init() {
+//http://mathworld.wolfram.com/SphericalCoordinates.html?affilliate=1
+	
+	//was 75 degrees
+	camera = new THREE.PerspectiveCamera( 45, window.innerWidth / window.innerHeight, 1, 10000 );
+	//camera.position.z = 1000;
+	camera.position.z = 11000; //9000
+	
+	scene = new THREE.Scene();
+	//scene.fog = new THREE.Fog( 0xffffff, 0, 750 );
+	
+	//lights
+	scene.add( new THREE.AmbientLight( 0xcccccc ) );
+	//var pointLight = new THREE.PointLight(0xFFFFFF);
+	//pointLight.position.x = 0;
+	//pointLight.position.y = 0;
+	//pointLight.position.z = 11000;
+	//scene.add(pointLight);
+	var directionalLight = new THREE.DirectionalLight(0xffffff);
+	//directionalLight.position.set(0,0,1).normalize();
+	directionalLight.position.set(0,1,0).normalize();
+	//directionalLight.position.x = 0;
+	//directionalLight.position.y = 0;
+	//directionalLight.position.z = 1;
+	//directionalLight.position.normalize();
+	scene.add(directionalLight);
+
+	
+	loadData();
+	
+	//add sphere representing the world
+	//THREE.SphereGeometry(radius, segmentsWidth, segmentsHeight);
+	//using WGS84 spheroid divided by 100 which matches the data in ECEF at scale 1/1000
+	earth = new THREE.Mesh(
+		new THREE.SphereGeometry(wgs84_a/1000, 36, 18), //36,18=10 degree faces
+		//new THREE.MeshBasicMaterial( { color: 0x0000ff, wireframe: false } )
+		//new THREE.MeshLambertMaterial({color: 0x0000ff, wireframe: true})
+		//0x7CCD7C
+		//new THREE.MeshLambertMaterial({color: 0x020202, ambient: 0x71C671, wireframe: false})
+		new THREE.MeshLambertMaterial({color: 0x202020, ambient: 0xDFEEF5, wireframe: false})
+	);
+	//earth.overdraw = true; //what does this do?
+	scene.add(earth);
+	
+	//10 degree Lat Lon grid squares which are overlayed on the earth sphere
+	//latLonGridLines = new THREE.Mesh(
+	//	new THREE.SphereGeometry(wgs84_a/1000, 36, 18),
+	//	new THREE.MeshBasicMaterial({color: 0xffffff, wireframe: true})
+	//);
+	//earth.add(latLonGridLines);
+	
+	//loadColladaWorld('data/London_dt_2001_area_CARTESIAN.DAE');
+	loadColladaWorld('data/TQ_Building_530000_180000_CARTESIAN.DAE');
+	//loadColladaWorld('data/TQ_TidalWater_530000_180000_CARTESIAN.DAE');
+	loadColladaWorld('data/TQ_TidalWater_503500_155500_CARTESIAN.DAE');
+	//THIS ONE! loadGeoJSONWorld('data/TM_WORLD_BORDERS_SIMPL-0.3_WGS84.geojson', 0x338800);
+	//loadGeoJSONWorld('data/TQ_Building_530000_180000_WGS84.geojson', 0x888888);
+	loadTubes();
+	//loadBuses();
+	
+	//load network data
+	//$.getJSON('realtime/victoria.json', function(json) {
+	$.getJSON('realtime/tube-network.json', function(json) {
+		tube_network = json;
+	});
+	//load tube station data
+	$.get('data/station-codes.csv', function(csv) {
+		var data = $.csv2Array(csv);
+		for (var i = 1; i < data.length; i++) { //skip header line
+			var stn = data[i][0], lon = data[i][3], lat = data[i][4];
+			lat = parseFloat(lat);
+			lon = parseFloat(lon);
+			tube_stationcodes[stn]={ 'lat': lat, 'lon': lon };
+		}
+	});
+
+	//don't forget this red wireframe cube is at the origin!!!!
+	geometry = new THREE.CubeGeometry( 200, 200, 200 );
+	material = new THREE.MeshBasicMaterial( { color: 0xff0000, wireframe: true } );
+	
+	mesh = new THREE.Mesh( geometry, material );
+	scene.add( mesh );
+	
+	//renderer = new THREE.CanvasRenderer();
+	renderer = new THREE.WebGLRenderer( { antialias: true, clearColor: 0x000000, clearAlpha: 1 } );
+	renderer.setSize( window.innerWidth, window.innerHeight );
+	
+	document.body.appendChild( renderer.domElement );
+	//var container = document.getElementById('container');
+	//container.appendChild( renderer.domElement );
+	
+	// STATS
+	stats = new Stats();
+	stats.domElement.style.position = 'absolute';
+	stats.domElement.style.bottom = '0px';
+	stats.domElement.style.zIndex = 100;
+	document.body.appendChild( stats.domElement );
+	
+	//controls
+	//controls = new THREE.FlyControls( camera );
+	//controls.movementSpeed=1000;
+	//controls.domElement = renderer.domElement;
+	//controls.rollSpeed = Math.PI/24;
+	//controls.autoForward = true;
+	//controls.dragToLook = false;
+	
+	//new event handlers
+	//renderer.domElement.addEventListener('DOMMouseScroll', mousewheel, false); //does this work with any browsers?
+	renderer.domElement.addEventListener( 'mousewheel', mousewheel, false);
+	renderer.domElement.addEventListener( 'mousedown', onDocumentMouseDown, false );
+	renderer.domElement.addEventListener( 'mouseup', onDocumentMouseUp, false );
+	renderer.domElement.addEventListener( 'mouseout', onDocumentMouseOut, false );
+	document.addEventListener( 'keydown', onKeyDown, false );
+}
+
+/**
+* Update the camera to look straight at the centre of the dataBounds box, with the whole box in the viewport
+*
+*/
+function updateCamera() {
+	var x1=dataBounds.min.x,
+		x2=dataBounds.max.x,
+		y1=dataBounds.min.y,
+		y2=dataBounds.max.y,
+		z1=dataBounds.min.z,
+		z2=dataBounds.max.z;
+	//find centre of x, y and z axes which is the centre on the earth sphere (z is height)
+	var cx=(x1+x2)/2;
+	var cy=(y1+y2)/2;
+	var cz=(z1+z2)/2;
+	var v = new THREE.Vector3(cx,cy,cz); //vector from origin to point we want to look at on surface
+	v.normalize();
+	var camera_pos = v.multiplyScalar(11000); //put camera at a fixed altitude - need to fix this later
+	//move the camera to the new position
+	camera.position.x=camera_pos.x;
+	camera.position.y=camera_pos.y;
+	camera.position.z=camera_pos.z;
+	//and look at the origin, which means we look at the data (it's along the same vector)
+	//you could look at this instead, but the origin is easier: new THREE.Vector3(cx,cy,wgs84_a/1000));
+	camera.lookAt(new THREE.Vector3(0,0,0));
+}
+
+//UI///////////////////////////////////
+function onWindowResize() {
+	windowHalfX = window.innerWidth / 2;
+	windowHalfY = window.innerHeight / 2;
+	
+	camera.aspect = window.innerWidth / window.innerHeight;
+	camera.updateProjectionMatrix();
+	
+	renderer.setSize( window.innerWidth, window.innerHeight );
+}
+
+/** Event fired when the mouse button is pressed down */
+function onDocumentMouseDown(event) {
+	event.preventDefault();
+	
+	mouseDown=true;
+	
+	var vector = new THREE.Vector3(
+		(event.clientX/window.innerWidth)*2-1,
+		-(event.clientY/window.innerHeight)*2+1,
+		0.5
+	);
+	projector.unprojectVector( vector, camera );
+	
+	//check for intersection with tube objects - maybe we could do this better?
+	var raycaster = new THREE.Raycaster( camera.position, vector.sub( camera.position ).normalize() );
+	var intersectsTubes = raycaster.intersectObjects(earth.children,true); //true=recurse
+	if (intersectsTubes.length>0) {
+		//console.log(intersectsTubes);
+		for (var i=0; i<intersectsTubes.length; i++)
+			console.log("Clicked: "+intersectsTubes[i].object.name);
+			//console.log(intersectsTubes[i]);
+	}
+	
+	var intersects = raycaster.intersectObject(earth); //was intersectObjects
+	if ( intersects.length > 0 ) {
+		//remember that the intersect point is actually the planar face intersection, so recalculate the z coordinate
+		//based on the WGS spheroid radius
+		var surfacePoint = intersects[0].point;
+		//is it better to drag the actual model, or the idealised sphere (below)?
+		surfacePoint.z=Math.sqrt((wgs84_a/1000)*(wgs84_a/1000)-surfacePoint.x*surfacePoint.x-surfacePoint.y*surfacePoint.y);
+		earthDragPoint.set(surfacePoint.x,surfacePoint.y,surfacePoint.z);
+		earthDragRotation.set(earth.rotation.x,earth.rotation.y,earth.rotation.z);
+		//console.log("Hit the earth at: "+earthDragPoint.x+","+earthDragPoint.y+","+earthDragPoint.z);
+		//hook in the move listener for the drag
+		renderer.domElement.addEventListener( 'mousemove', onDocumentMouseMove, false );
+	}
+}
+
+/** Removes event listeners when the mouse button is let go */
+function onDocumentMouseUp(event) {
+	event.preventDefault();
+	
+	earthDragPoint.set(0,0,0);
+	//unhook the move handler
+	renderer.domElement.removeEventListener( 'mousemove', onDocumentMouseMove, false );
+	
+	mouseDown = false;
+}
+
+/** This event handler is only fired after the mouse down event and
+    before the mouse up event and only when the mouse moves */
+function onDocumentMouseMove(event) {
+	event.preventDefault();
+	
+	var vector = new THREE.Vector3(
+		(event.clientX/window.innerWidth)*2-1,
+		-(event.clientY/window.innerHeight)*2+1,
+		0.5
+	);
+	projector.unprojectVector( vector, camera );
+	
+	var raycaster = new THREE.Raycaster( camera.position, vector.sub( camera.position ).normalize() );
+	
+	var intersects = raycaster.intersectObject(earth); //was intersectObjects
+	if ( intersects.length > 0 ) {
+		//remember that the intersect point is actually the planar face intersection, so recalculate the z coordinate
+		//based on the WGS spheroid radius
+		var surfacePoint = intersects[0].point;
+		//is it better to drag the actual model, or the idealised sphere (below)?
+		surfacePoint.z=Math.sqrt((wgs84_a/1000)*(wgs84_a/1000)-surfacePoint.x*surfacePoint.x-surfacePoint.y*surfacePoint.y);
+		//now calculate deltas between the click point and the current mouse surface position
+		var delta = surfacePoint.sub(earthDragPoint);
+		var Phi = Math.acos(delta.y/(wgs84_a/1000))-Math.PI/2;
+		//calculate Theta on base triangle using hypot calculated from sqrt(radius^2 - dy^2) on Phi triangle
+		var hy=Math.sqrt((wgs84_a/1000)*(wgs84_a/1000)-delta.y*delta.y);
+		var Theta = Math.asin(delta.x/hy);
+		earth.rotation.x=earthDragRotation.x+Phi;
+		earth.rotation.y=earthDragRotation.y+Theta;
+		//earth.updateMatrix();
+		//earthDragPoint = surfacePoint;
+	}
+}
+
+
+/** Removes event listeners if the mouse runs off the renderer */
+function onDocumentMouseOut(event) {
+	event.preventDefault();
+	
+	renderer.domElement.removeEventListener( 'mousemove', onDocumentMouseMove, false );
+	earthDragPoint.set(0,0,0);
+	mouseDown = false;
+}
+
+/** Handles zoom in and out with the wheel */
+function mousewheel( event )
+{
+	//var amount = 100; // parameter
+	//
+	//// get wheel direction
+	//var d = ((typeof e.wheelDelta != "undefined")?(-e.wheelDelta):e.detail);
+	//d = 100 * ((d>0)?1:-1);
+	//
+	//// do calculations, I'm not using any three.js internal methods here, maybe there is a better way of doing this
+	//// applies movement in the direction of (0,0,0), assuming this is where the camera is pointing
+	//var cPos = camera.position;
+	//var r = cPos.x*cPos.x + cPos.y*cPos.y;
+	//var sqr = Math.sqrt(r);
+	//var sqrZ = Math.sqrt(cPos.z*cPos.z + r);
+	//
+	//var nx = cPos.x + ((r==0)?0:(d * cPos.x/sqr));
+	//var ny = cPos.y + ((r==0)?0:(d * cPos.y/sqr));
+	//var nz = cPos.z + ((sqrZ==0)?0:(d * cPos.z/sqrZ));
+	//
+	//// verify we're applying valid numbers
+	//if (isNaN(nx) || isNaN(ny) || isNaN(nz))
+	//	return;
+	//	
+	//cPos.x = nx;
+	//cPos.y = ny;
+	//cPos.z = nz;
+	
+	// get wheel direction
+	var d = ((typeof event.wheelDelta != "undefined")?(-event.wheelDelta):event.detail);
+	d = 50 * ((d>0)?1:-1);
+	//camera.position.z+=d;
+	//next attempt...
+	zoomin(d);
+}
+
+function onKeyDown(event) {
+	//38 arrow up, 40 arrow down
+	if (event.keyCode==38) { //arrow up
+		zoomin(-10)
+	}
+	else if (event.keyCode==40) { //arrow down
+		zoomin(10);
+	}
+	else if (event.keyCode==65) { //a key
+		tilt(Math.PI/36);
+	}
+	else if (event.keyCode==90) { //z key
+		tilt(-Math.PI/36);
+	}
+}
+
+/**
+* Zoom camera into the earth using either the mouse wheel or cursor keys
+* @d is the amount to zoom in by (distance)
+*/
+function zoomin(d) {
+	//var h = camera.position.z-wgs84_a/1000; //double minus as both coords negative
+	var h = camera.position.length()-wgs84_a/1000; //more robust formula to calculate altitude of moving camera
+	
+	//console.log("camera="+camera.position.z+" height="+h);
+	d = (h/10) * ((d>0)?1:-1); //distance varies by height
+	//camera.position.z+=d; //move towards the centre of the earth
+	camera.translateZ(d); //move towards where camera is looking (was -d originally)
+}
+
+/**
+* @a angle (radians) to tile the camera by in X axis (up /down)
+*/
+function tilt(a) {
+	camera.rotation.x+=a;
+}
+
+///////////////////////////////////////
+
+function animate() {
+	// note: three.js includes requestAnimationFrame shim
+	requestAnimationFrame( animate );
+	
+	mesh.rotation.x += 0.01;
+	mesh.rotation.y += 0.02;
+	
+	//if (mesh_tubeLines!=null) {
+	//	mesh_tubeLines.rotation.x += 0.01;
+	//	mesh_tubeLines.rotation.y += 0.02;
+	//	mesh_tubeLines.rotation.z += 0.02;
+	//}
+	animate_tubes();
+	
+	//earth.rotation.y+=0.001;
+	
+	//earth.rotation.y = earth.rotation.y += ( targetRotation - earth.rotation.y ) * 0.005;
+	//var delta = clock.getDelta();
+	//controls.update(delta);
+	renderer.render( scene, camera );
+	stats.update();
+}
+
+/**
+* Animate tube trains using the network data and current position
+*/
+function animate_tubes() {
+	if (tube_data_time==null) return; //not loaded yet...
+	if (tube_network==null) return;
+	//var delta = clock.getDelta();
+	var now = new Date();
+	var elapsedSecs = (now-tube_data_time)/1000; //between data time and now
+	//scene.traverse...
+	earth.traverse(function (child) {
+		var anim_rec = tube_data[child.name];
+		if (anim_rec!=null) {
+			var d = anim_rec.timeToStation-elapsedSecs;
+			var lineCode = child.name[0]; //first letter of name is the line code
+			var lineRoutes = tube_network[lineCode];
+			if (lineRoutes==null) return; //exit early as this signals data not fully loaded asynchronously
+			
+			var route = lineRoutes[anim_rec.platformCode]; //0 or 1 representing up or down direction
+			if (d<0) {
+				//Already got to next station and gone beyond, so extrapolate position based on next station along route.
+				//Essentially, write a new anim record based on the tube following the runlink exactly.
+				//TODO: this isn't going to work if there is a choice of next station at a branch. For this you need to use
+				//the destination.
+				//FIX: TODO: if there is a choice, you could just sit at the station and wait rather than make a wrong guess?
+				for (i in route) {
+					var runlink=route[i];
+					if (runlink.o==anim_rec.stationCode) { //find a runlink originating at the station we've just reached in dir we're going
+						anim_rec.stationCode=runlink.d;
+						anim_rec.timeToStation=d+runlink.r+elapsedSecs; //calculated from d+= below and var d= line above
+						d+=runlink.r; //move d along this runlink by its negative amount
+						break;
+					}
+				}
+			}
+			//rest of code
+			if (d>0) { //i.e. we haven't got to the next station yet
+				//console.log("d="+d);
+				//get the relevant runlink
+				for (i in route) {
+					var runlink=route[i];
+					if (runlink.d==anim_rec.stationCode) { //check destination station for direction we're going in
+						//console.log(runlink);
+						//do the new position calculation here
+						var fromStation = tube_stationcodes[runlink.o];
+						var toStation = tube_stationcodes[runlink.d];
+						var lambda = (runlink.r-d)/runlink.r;
+						//console.log(lambda);
+						if (lambda<0) lambda=0; //math.min!
+						if (lambda>1) lambda=1; //shouldn't happen
+						//technically, this is spherical, not linear
+						//var dlon=toStation.lon-fromStation.lon, dlat=toStation.lat-fromStation.lat;
+						//var lon=fromStation.lon+lambda*dlon, lat=fromStation.lat+lambda*dlat;
+						var p1 = convertCoords(fromStation.lon,fromStation.lat,0); //height=0 above earth
+						var p2 = convertCoords(toStation.lon,toStation.lat,0);
+						var ox=child.position.x, oy=child.position.y, oz=child.position.z;
+						child.position.x=(p1.x+lambda*(p2.x-p1.x))/1000;
+						child.position.y=(p1.y+lambda*(p2.y-p1.y))/1000;
+						child.position.z=(p1.z+lambda*(p2.z-p1.z))/1000;
+						//var vec = new THREE.Vector3();
+						//vec.x=p2.x/1000; vec.y=p2.y/1000; vec.z=p2.z/1000;
+						//careful with this as it modifies p2 i.e. don't use p2 again!
+						child.lookAt(p2.multiplyScalar(1/1000)); //align cube towards destination station
+						
+						//child.calculateBoundingBox();
+						//child.geometry.verticesNeedUpdate = true;
+						//child.geometry.normalsNeedUpdate = true;
+						//child.geometry.elementsNeedUpdate = true;
+						//child.geometry.buffersNeedUpdate = true;
+						//child.geometry.computeBoundingBox();
+						//child.geometry.computeBoundingSphere();
+						//console.log(d,lambda,runlink,ox,oy,oz,p1,p2,child.position.x,child.position.y,child.position.z);
+						//update?
+						//child.verticesNeedUpdate = true;
+						break;
+					}
+				}
+			}
+			else {} //stop animating as we're past the next station and need the graph to find out where to go next
+		}
+	});
+}
+
+//var mesh_world = null;
+/**
+* loadColladaWorld
+* @param filename The file to load - must be Collada (DAE) in cartesian coords
+*/
+function loadColladaWorld(filename) {
+	//var loader = new THREE.JSONLoader();
+	//loader.load('data/TM_WORLD_BORDERS-0.3.js', function callback(geom) {
+	//	//world-borders is a geometry only javascript file
+	//	mesh_world = new THREE.Object3D();
+	//	var mat_simple = new THREE.MeshBasicMaterial( { color: 0xff0000, wireframe: true } );
+	//	var mesh = new THREE.Mesh(geom,mat_simple);
+	//	mesh_world.add(mesh);
+	//	//mesh_world.scale.x = mesh_world.scale.y = mesh_world.scale.z = 0.01;
+	//	earth.add(mesh_world);
+	//});
+	var loader = new THREE.ColladaLoader();
+	loader.options.convertUpAxis = true;
+	loader.options.upAxis='Y';
+	//loader.load('data/TM_WORLD_BORDERS-0.3.DAE', function callback(collada) {
+	//loader.load('data/TM_WORLD_BORDERS_SIMPL-0.3.DAE', function callback(collada) {
+	loader.load(filename, function callback(collada) {
+		var my_mesh_world = new THREE.Object3D();
+		my_mesh_world.name=extractFilenameWithoutExtension(filename);
+		//var mat_simple = new THREE.MeshBasicMaterial( { color: 0x808080, wireframe: false } );
+		//var mat_simple = new THREE.MeshLambertMaterial( { color: 0x808080, ambient: 0x808080, wireframe: false } );
+		//var mat_simple = new THREE.MeshLambertMaterial( { color: 0x808080, ambient: 0x808080, wireframe: false, transparent: true } );
+		for (var i in collada.scene.children) {
+			//pull the basic colour from collada file, but put it into our own material - don't trust collada material imports
+			var mat = collada.scene.children[i].material;
+			var mat_simple = new THREE.MeshLambertMaterial( { color: mat.color, ambient: mat.color, wireframe: false, transparent: true } );
+			mat_simple.opacity=0.8;
+			var g = collada.scene.children[i].geometry;
+			var mesh = new THREE.Mesh(g,mat_simple);
+			my_mesh_world.add(mesh);
+		}
+		my_mesh_world.doubleSided=true;
+		earth.add(my_mesh_world);
+		//if you get rid of the debug bounding box, you will have to compute the bbox here
+		var bbox = DEBUG_addBoundingBox(my_mesh_world);
+		dataBounds.union(bbox);
+		updateCamera();
+	});
+}
+
+/**
+* Takes a GeoJSON array of array of points [ [x,y,x,y,...], [x,y,x,y,...], [x,y,x,y,...] ]
+* and converts it into [ [Vector2,Vector2,...], [Vector2,Vector2,...], [Vector2,Vector2,...] ]
+* so that the rings can be passed to THREE.JS to make shapes.
+*/
+function makeVectorRings(linearRings) {
+	//guard against zero rings? - it's illegal
+	var v_rings = [];
+	$.each(linearRings, function(i,ring) {
+		var v_ring = [];
+		$.each(ring, function(i,coord) {
+			v_ring.push(new THREE.Vector2(coord[0],coord[1]));
+		});
+		//push ring coords backwards
+		//for (var j=ring.length-1; j>=0; j--) {
+		//	v_ring.push(new THREE.Vector2(ring[j][0],ring[j][1]));
+		//}
+		v_rings.push(v_ring);
+	});
+	return v_rings;
+}
+
+/**
+* A polygon is an array of linear rings where the first ring is the exterior ring and all following
+* rings are interior rings (holes).
+* @param linearRings
+* @returns A THREE.JS geometry, extruded 20 units, but still in lat/lon coords
+*/
+function parsePolygon(linearRings) {
+	var geom = null;
+	var v_rings = makeVectorRings(linearRings); //turn coords into vectors
+	
+	//var shape = new THREE.Shape(v_rings[0]);
+	//shape.autoClose=true;
+	//if (v_rings.length > 1) {
+	//	shape.holes = v_rings.slice(1).map(function(hole) { return new THREE.Shape(hole); });
+	//}
+	//if (v_rings.length>1) {
+	//	for (var i=1; i<v_rings.length; i++) {
+	//		var hole = new THREE.Shape(v_rings[i]);
+	//		//hole.autoClose=true;
+	//		shape.holes.push(hole);
+	//	}
+	//}
+	
+	//none of the THREE.JS triangulation routines seem to work on any real geographic data...
+	//height is wrong! seems to do nothing 'amount'?
+	//geom = new THREE.ExtrudeGeometry(shape, { amount: 100, bevelEnabled: false });
+	//geom = shape.makeGeometry();
+	
+	//use poly2tri to do the triangulation see: http://threejsdoc.appspot.com/doc/three.js/src.source/extras/core/Shape.js.html
+	//THREE.JS vector has x,y properties, so can be used with poly2tri
+	var points = v_rings[0].slice(0); //shallow clone the points
+	points.pop(); //pop off final closing point from end or outer shell
+	var swctx = new poly2tri.SweepContext(points);
+	//add holes, which get added on to the points array used to create the SweepContext
+	for (var i=1; i<v_rings.length; i++) {
+		v_rings[i].pop(); //remove duplicate end point
+		swctx.AddHole(v_rings[i]);
+	}
+	try {
+		poly2tri.sweep.Triangulate(swctx); //throws a collinear error for degenerates
+		//now get the data out as a mesh
+		var triangles = swctx.GetTriangles();
+		var tr;
+		geom = new THREE.Geometry();
+		//and push the new geometry triangle by triangle
+		for (var i in points) { //there's probably an easier way of doing this
+			var x = points[i].x;
+			var y = points[i].y;
+			geom.vertices.push(new THREE.Vector3(x,y,0));
+		}
+		for (var t in triangles) {
+			tr = triangles[t];
+			var v1 = points.indexOf(tr.GetPoint(0));
+			var v2 = points.indexOf(tr.GetPoint(1));
+			var v3 = points.indexOf(tr.GetPoint(2));
+			geom.faces.push(new THREE.Face3(v1,v2,v3));
+		}
+		geom.verticesNeedUpdate = true;
+		geom.normalsNeedUpdate = true;
+		geom.elementsNeedUpdate = true;
+		geom.buffersNeedUpdate = true;
+		geom.computeBoundingBox();
+		geom.computeBoundingSphere();
+		//geom.computeVertexNormals(); //crashes - are there no normals? do I have to create them?
+		//geometry.computeCentroids();
+		//geometry.computeFaceNormals();
+		//console.log(geom);
+	}
+	catch (err) {
+		console.log(err);
+	} //probably a collinear error - can't do anything about that
+	
+	return geom;
+}
+
+/**
+* Takes a GeoJSON geometry object and returns a THREE.JS mesh
+* TODO: only handles polygon and multipolygon types at the moment
+* @param geoJSON The features[i].geometry part of the GeoJSON FeatureCollection
+* @param colour integer version of colour
+*/
+function parseGeometry(geoJSON,colour) {
+	var object3D = new THREE.Object3D();
+	switch (geoJSON.type) {
+		case 'GeometryCollection':
+			break;
+		case 'Point' :
+			break;
+		case 'LineString' :
+			break;
+		case 'Polygon' :
+			var geom = parsePolygon(geoJSON.coordinates);
+			var mesh = new THREE.Mesh(geom, new THREE.MeshBasicMaterial( { color: colour, wireframe: false } ) );
+			object3D.add(mesh);
+			break;
+		case 'MultiPoint' :
+			break;
+		case 'MultiLineString' :
+			break;
+		case 'MultiPolygon':
+			$.each(geoJSON.coordinates, function(i,poly) {
+				var geom = parsePolygon(poly);
+				if (geom!=null) {
+					var mesh = new THREE.Mesh(geom, new THREE.MeshBasicMaterial( { color: colour, wireframe: false } ) );
+					object3D.add(mesh);
+				}
+			});
+			break;
+	}
+	return object3D;
+}
+
+/**
+* Compute bounding box of compound Object3D
+*/
+function getCompoundBoundingBox(object3D) {
+	var box = null;
+	object3D.traverse(function (obj3D) {
+		var geometry = obj3D.geometry;
+		if (geometry === undefined) return;
+		geometry.computeBoundingBox();
+		if (box === null) {
+			box = geometry.boundingBox;
+		}
+		else {
+			box.union(geometry.boundingBox);
+		}
+	});
+	return box;
+}
+
+
+/**
+* GeoJSON specification is here: http://www.geojson.org/
+* GEOMETRY MUST BE IN WGS84 IN 2D
+* This is due to the way that the outer ring and inner rings (holes) must be created, extruded
+* and then projected onto a spherical Earth (actually spherical to Cartesian).
+* The plane needs to be flat in order to load the complex geometry and be able to extrude it.
+* An alternative would be to pre-compute the tesselation rather than using path geometry and load
+* the object as a true 3D model rather than a 2D one, but this follows the recognised geospatial
+* approach.
+* Sets mesh_world when data has loaded and been parsed
+* This is the root source of the THREE.JS triangulation code (C++)
+* http://www.flipcode.com/archives/Efficient_Polygon_Triangulation.shtml
+* @param url
+* @param colour
+* It's an async loading function, so it can't return anything. Meshes get added to the scene graph as they load.
+*/
+function loadGeoJSONWorld(url,colour) {
+	//MUST ensure that polygons have no outer boundaries that are self-touching.
+	//Used geotools to clean the geojson file first.
+
+	//using jQuery JSON parsing
+	//$.getJSON('data/TM_WORLD_BORDERS_SIMPL-0.3_WGS84.JSON', function(json) {
+	//$.getJSON('data/UK_TM_WORLD_BORDERS_SIMPL-0.3_WGS84.JSON', function(json) {
+	//$.getJSON('data/box_test.JSON', function(json) {
+	//$.getJSON('data/CANADA_TM_WORLD_BORDERS_SIMPL-0.3_WGS84.JSON', function(json) {
+	//$.getJSON('data/TM_WORLD_BORDERS_SIMPL-0.3_WGS84_QGIS.GEOJSON', function(json) {
+	//$.getJSON('data/TM_WORLD_BORDERS_SIMPL-0.3_WGS84.GEOJSON', function(json) {
+	$.getJSON(url, function(json) {
+		//json.features is a list of feature objects which we need to parse
+		var my_mesh_world = new THREE.Object3D();
+		$.each(json.features, function(i, feature) {
+			//"type" : "FeatureCollection",
+			//"geometry" : { "type": "LineString", "coordinates": [ [102.0, 0.0], [103.0, 1.0], [104.0, 0.0], [105.0, 1.0]]},
+			//"properties" : { key/value pairs }
+			var object3D = parseGeometry(feature.geometry,colour);
+			if (object3D!=null) {
+				//reproject object into Cartesian and add to composite object
+				sphericalToCartesian(object3D);
+				my_mesh_world.add(object3D);
+			}
+		});
+		//mesh_world.verticesNeedUpdate = true;
+		//mesh_world.normalsNeedUpdate = true;
+		//mesh_world.elementsNeedUpdate = true;
+		//mesh_world.buffersNeedUpdate = true;
+		earth.add(my_mesh_world);
+		
+		//add a bounding cube marker so we know where geometry is
+		DEBUG_addBoundingBox(my_mesh_world);
+	});
+}
+
+/**
+* Add a wireframe bounding box around an object so you can see where it is.
+* @param o3d The object to add the bounding box for (box gets added to earth, not as a child of o3d)
+* @returns the bounding box object (the box3, not the geometry)
+*/
+function DEBUG_addBoundingBox(o3d) {
+//add a bounding cube marker so we know where geometry is
+		var bbox = getCompoundBoundingBox(o3d);
+		var x1=bbox.min.x,
+			x2=bbox.max.x,
+			y1=bbox.min.y,
+			y2=bbox.max.y,
+			z1=bbox.min.z,
+			z2=bbox.max.z;
+		var bbox_cube = new THREE.Mesh(
+			new THREE.CubeGeometry(x2-x1, y2-y1, z2-z1),
+			new THREE.MeshBasicMaterial( { color: 0xffffff, wireframe: true } )
+		);
+		bbox_cube.position.x=(x1+x2)/2;
+		bbox_cube.position.y=(y1+y2)/2;
+		bbox_cube.position.z=(z1+z2)/2;
+		earth.add(bbox_cube);
+		return bbox;
+}
+
+/**
+ * Convert lon/lat/height coords into xyz and return vector3 object
+*/
+function convertCoords(lon,lat,h) {
+	var Theta = lon * Math.PI / 180.0;
+	var Phi = lat * Math.PI / 180.0;
+	var CosTheta = Math.cos(Theta);
+	var SinTheta = Math.sin(Theta);
+	var CosPhi = Math.cos(Phi);
+	var SinPhi = Math.sin(Phi);
+	var Radius = wgs84_a + h;
+	var x = Radius * CosPhi * SinTheta;
+	var y = Radius * SinPhi;
+	var z = Radius * CosPhi * CosTheta;
+	return new THREE.Vector3(x,y,z);
+}
+
+/**
+ * Go through all points in the Object3D and children recursively and convert the WGS84
+ * coordinates to cartesian.
+*/
+function sphericalToCartesian(object3D) {
+	//An Object3D doesn't have any geometry, but a Mesh does
+	if (object3D.geometry) {
+		for (var i=0; i<object3D.geometry.vertices.length; i++) {
+			var lon = object3D.geometry.vertices[i].x;
+			var lat = object3D.geometry.vertices[i].y;
+			var h = object3D.geometry.vertices[i].z; //z=height from the extrusion
+			var Theta = lon * Math.PI / 180.0;
+            var Phi = lat * Math.PI / 180.0;
+            var CosTheta = Math.cos(Theta);
+            var SinTheta = Math.sin(Theta);
+            var CosPhi = Math.cos(Phi);
+            var SinPhi = Math.sin(Phi);
+			var Radius = wgs84_a + h;
+            var x = Radius * CosPhi * SinTheta;
+            var y = Radius * SinPhi;
+            var z = Radius * CosPhi * CosTheta;
+            object3D.geometry.vertices[i].x=x/1000.0;
+			object3D.geometry.vertices[i].y=y/1000.0;
+			object3D.geometry.vertices[i].z=z/1000.0;
+		}
+		object3D.geometry.verticesNeedUpdate = true;
+		object3D.geometry.normalsNeedUpdate = true;
+		object3D.geometry.elementsNeedUpdate = true;
+		object3D.geometry.buffersNeedUpdate = true;
+		object3D.geometry.computeBoundingBox();
+		object3D.geometry.computeBoundingSphere();
+	}
+	//and recurse...
+	for (var i=0; i<object3D.children.length; i++) {
+		sphericalToCartesian(object3D.children[i]);
+	}
+}
+
+/**
+* Returns the filename from a path, but without the extension
+*/
+function extractFilenameWithoutExtension(path) {
+	var filename = path.split(/(\\|\/)/g).pop();
+	filename = filename.substring(0,filename.lastIndexOf('.'));
+	return filename;
+}
+
+/**
+ * loadData
+ * Loads all static models
+ */
+var mesh_tubeLines = null;
+var yellow_cube=null;
+function loadData() {
+	var loader = new THREE.ColladaLoader();
+	//loader.options.convertUpAxis = false; //does nothing?
+	loader.load('data/TubeLines_thin_ECEF.DAE', function colladaReady( collada ) {
+		//console.log(collada);
+		//NOTE: getChildByName is returning a mesh, not a geometry!
+		//	geometry = collada.scene.getChildByName('Cube', true).geometry; //scene.children[0]
+		
+		//for some reason, adding collada.scene to the scene doesn't work (materials?), so
+		//have to add each piece of geometry to an Object3D
+		mesh_tubeLines = new THREE.Object3D();
+		for (var i in collada.scene.children) {
+			//var mat = collada.dae.materials[i]; //what is this?
+			//get the colour of the Phong material that's defined for the child mesh and extract
+			//it to make a replacement simple material of the same diffuse colour that will
+			//actually render correctly
+			var mat = collada.scene.children[i].material;
+			//console.log(mat);
+			//var mat_simple = new THREE.MeshBasicMaterial( { color: mat.color, wireframe: false } );
+			var mat_simple = new THREE.MeshLambertMaterial({color: mat.color, ambient: mat.color, reflectivity: 0.5, wireframe: false});
+			//mat_simple.color = mat.color;
+			var g = collada.scene.children[i].geometry;
+			var mesh = new THREE.Mesh(g,mat_simple);
+			mesh_tubeLines.add(mesh);
+		}
+		//mesh_tubeLines = collada.scene; //.children[1].geometry; //was 0
+		//aircraftMesh.rotationAutoUpdate=true;
+		//mesh_tubeLines.matrixAutoUpdate=false;
+		//aircraftMesh.useQuaternion=true;
+
+		//flip aircraft around?
+		//	dae.scale.x = dae.scale.y = dae.scale.z = 0.002;
+		//	dae.rotation.x = -Math.PI/2;
+		//	dae.updateMatrix();
+		//
+		
+		//x is lon, y is lat and z=height
+		//var g = new THREE.CubeGeometry( 200, 200, 200 );
+		//var mat = new THREE.MeshBasicMaterial( { color: 0xff0000, wireframe: false } );
+		//mesh_tubeLines = new THREE.Mesh( g, mat );
+		//49889.371094 -100.155922 39737.390625 (old)
+		//-79.126503 49890.207031 39737.351563
+		//mesh_tubeLines.position.x=79;
+		//mesh_tubeLines.position.y=-4989.0;
+		//mesh_tubeLines.position.z=-3973.7; //+700;
+		mesh_tubeLines.scale.x = mesh_tubeLines.scale.y = mesh_tubeLines.scale.z = 0.1;
+		mesh_tubeLines.updateMatrix();
+		//scene.add(mesh_tubeLines);
+		earth.add(mesh_tubeLines);
+		//add yellow cube at (0,0,-6378) i.e. on the Earth's surface at the equator
+		//changed yellow cube to sit on London
+		yellow_cube = new THREE.Mesh(
+			new THREE.CubeGeometry( 200, 200, 200 ),
+			new THREE.MeshBasicMaterial( { color: 0xffff00, wireframe: false } )
+		);
+		//yellow_cube.position.x=-79.12;
+		//yellow_cube.position.y=4989.021;
+		//yellow_cube.position.z=3973.735; //-6378; //mesh_tubeLines.position.z;
+		yellow_cube.position.x=0;
+		yellow_cube.position.y=0;
+		yellow_cube.position.z=wgs84_a/1000;
+		//my_cube.scale.x=my_cube.scale.y=my_cube.scale.z=0.1;
+		yellow_cube.updateMatrix();
+		earth.add(yellow_cube);
+		//camera.lookAt(mesh_tubeLines);
+		//rotate the earth so that the 52 degree line is directly in front of you
+		//earth.rotation.x+=52.0/180.0*Math.PI;
+		earth.updateMatrix();
+	});
+}
+
+
+/**
+* Get colour for a tube line from the line code character
+*/
+var lineBColour = 0xb06110;
+var lineCColour = 0xef2e24;
+var lineDColour = 0x008640;
+var lineHColour = 0xffd203; //this is yellow!
+var lineJColour = 0x959ca2;
+var lineMColour = 0x98005d;
+var lineNColour = 0x231f20;
+var linePColour = 0x1c3f95;
+var lineVColour = 0x009ddc;
+var lineWColour = 0x86cebc;
+//lineY colour?
+function lineCodeToColour(c) {
+	switch (c) {
+		case 'B': return lineBColour; //Bakerloo
+		case 'C': return lineCColour; //Central
+		case 'D': return lineDColour; //District
+		case 'H': return lineHColour; //Hammersmith and City and Circle
+		case 'J': return lineJColour; //Jubilee
+		case 'M': return lineMColour; //Metropolitan
+		case 'N': return lineNColour; //Northern
+		case 'P': return linePColour; //Piccadilly
+		case 'V': return lineVColour; //Victoria
+		case "W": return lineWColour; //Waterloo and City
+		default: return 0xffffff; //white
+	}
+}
+
+/**
+* Load data for realtime tube positions
+* Victoria 2009 stock is 8 cars, 133.28m long, 2.68m wide and 2.88m high
+*/
+function loadTubes() {
+	//linecode,tripnumber,setnumber,lat,lon,east,north,timetostation(secs),location,stationcode,stationname,platform,destination,destinationcode
+	tube_data_time = new Date(); //HACK! assume data is for now, not archive data
+	tube_data = new Array();
+	//$.get('realtime/trackernet_20130418_135400.csv', function (csv) {
+	//$.get('realtime/trackernet_20130618_140000.csv', function (csv) { //contains platform direction codes
+	$.get('http://loggerhead.casa.ucl.ac.uk/api.svc/f/trackernet?pattern=trackernet_*.csv', function (csv) { //latest data
+		var data = $.csv2Array(csv);
+		for (var i = 1; i < data.length; i++) { //skip header line
+			var lineCode = data[i][0], tripNum = data[i][1], setNum = data[i][2], lat = data[i][3], lon = data[i][4];
+			if ((lat != "NaN") && (lon != "NaN")) {
+				var timeToStation = parseInt(data[i][7]), stationCode = data[i][9], platform = data[i][11], platformCode = data[i][12];
+				var lineColour = lineCodeToColour(lineCode);
+				lat = parseFloat(lat);
+				lon = parseFloat(lon);
+				//tube size is world coords i.e. metres*1000
+				var tube_cube = new THREE.Mesh(
+					new THREE.CubeGeometry(0.04,0.04,0.2/*2.68/1000,2.88/1000,133.28/1000*/), //whl
+					new THREE.MeshBasicMaterial( { color: lineColour, wireframe: false } )
+				);
+				tube_cube.name=lineCode+"_"+tripNum+"_"+setNum;
+				var p3d = convertCoords(lon,lat,0);
+				tube_cube.position.x=p3d.x/1000.0;
+				tube_cube.position.y=p3d.y/1000.0;
+				tube_cube.position.z=p3d.z/1000.0;
+				tube_cube.updateMatrix();
+				earth.add(tube_cube);
+				//tube_cube.add(new THREE.Axes()); //doesn't work
+				//now add a separate data record for animation
+				tube_data[lineCode+"_"+tripNum+"_"+setNum] = {
+					'lat' : lat,
+					'lon' : lon,
+					'timeToStation' : timeToStation,
+					'stationCode' : stationCode,
+					'platform' : platform,
+					'platformCode' : platformCode
+				};
+			}
+		}
+		//DEBUG_addBoundingBox(tubesO3D);
+	});
+}
+
+/**
+* Load bus positions from countdown csv datafile
+* The new RouteMaster is 11.23m long, 2.52m wide and 4.39m high according to Wikipedia
+*/
+var busColour = 0xdc241f; //can you believe there is a TfL colour document defining this?
+function loadBuses() {
+	//route,destination,vehicleid,registration,tripid,lat,lon,east,north,bearing,expectedtime(utc),timetostation(secs),linkruntime,detailsstopcode,fromstopcode,tostopcode
+	$.get('realtime/countdown_20130418_135400.csv', function (csv) {
+		var busesO3D = new THREE.Object3D();
+		var data = $.csv2Array(csv);
+		for (var i = 1; i < data.length; i++) { //skip header line
+			var lat = data[i][5], lon = data[i][6], bearing = data[i][9];
+			if ((lat != "NaN") && (lon != "NaN")) {
+				lat = parseFloat(lat);
+				lon = parseFloat(lon);
+				//bus size is world coords i.e. metres*1000
+				var bus_cube = new THREE.Mesh(
+					new THREE.CubeGeometry(0.02,0.02,0.02/*2.52/1000,4.39/1000,11.23/1000*/), //whl
+					//new THREE.MeshBasicMaterial( { color: busColour, wireframe: false } )
+					new THREE.MeshLambertMaterial({color: busColour, ambient: busColour, reflectivity: 0.5, wireframe: false})
+				);
+				var p3d = convertCoords(lon,lat,0);
+				bus_cube.position.x=p3d.x/1000.0;
+				bus_cube.position.y=p3d.y/1000.0;
+				bus_cube.position.z=p3d.z/1000.0;
+				bus_cube.updateMatrix();
+				busesO3D.add(bus_cube);
+			}
+		}
+		earth.add(busesO3D);
+		//DEBUG_addBoundingBox(busesO3D);
+	});
+}
+
+</script>
+
+</body>
+
+</html>
