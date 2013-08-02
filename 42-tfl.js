@@ -191,7 +191,7 @@ var TubeDataLayer = {
 			
 					//for some reason, adding collada.scene to the scene doesn't work (materials?), so
 					//have to add each piece of geometry to an Object3D
-					inner_parent.bbox = null;
+					//inner_parent.bbox = null;
 					inner_parent.mesh_tubeLines = new THREE.Object3D();
 					for (var i in collada.scene.children) {
 						//var mat = collada.dae.materials[i]; //what is this?
@@ -206,8 +206,9 @@ var TubeDataLayer = {
 						var g = collada.scene.children[i].geometry;
 						var mesh = new THREE.Mesh(g,mat_simple);
 						inner_parent.mesh_tubeLines.add(mesh);
-						if (inner_parent.bbox===null) inner_parent.bbox=mesh.geometry.boundingBox;
-						else inner_parent.bbox.union(mesh.geometry.boundingBox);
+						//moved bounding box calculation down due to scaling issues i.e. it doesn't apply the scale to the box
+						//if (inner_parent.bbox===null) inner_parent.bbox=mesh.geometry.boundingBox;
+						//else inner_parent.bbox.union(mesh.geometry.boundingBox);
 					}
 					//mesh_tubeLines = collada.scene; //.children[1].geometry; //was 0
 					//aircraftMesh.rotationAutoUpdate=true;
@@ -225,6 +226,10 @@ var TubeDataLayer = {
 					//mesh_tubeLines.position.z=-3973.7; //+700;
 					inner_parent.mesh_tubeLines.scale.x = inner_parent.mesh_tubeLines.scale.y = inner_parent.mesh_tubeLines.scale.z = 0.1;
 					inner_parent.mesh_tubeLines.updateMatrix();
+					//calculate mesh bounding box and apply scale to the box manually as it doesn't get set from the scale matrix just set above
+					inner_parent.bbox = getCompoundBoundingBox(inner_parent.mesh_tubeLines);
+					inner_parent.bbox.min.multiplyScalar(0.1); //you can't scale the box directly, only the min and max vectors
+					inner_parent.bbox.max.multiplyScalar(0.1);
 					earth.add(inner_parent.mesh_tubeLines);
 			
 					//camera.lookAt(mesh_tubeLines);
@@ -297,6 +302,9 @@ var TubeDataLayer = {
 var BusDataLayer = {
 
 	bbox : null,
+	busParent : null, //object that is the parent to all the bus cubes
+	
+	urlRealTimeBuses : 'realtime/countdown_20130418_135400.csv',
 	
 	/**
 	* Load bus positions from countdown csv datafile
@@ -304,33 +312,52 @@ var BusDataLayer = {
 	*/
 	busColour : 0xdc241f, //can you believe there is a TfL colour document defining this?
 	
-	load : function () {
+	animate : function (earth) {},
+	
+	load : function (earth,ondataloaded) {
 		//route,destination,vehicleid,registration,tripid,lat,lon,east,north,bearing,expectedtime(utc),timetostation(secs),linkruntime,detailsstopcode,fromstopcode,tostopcode
-		$.get('realtime/countdown_20130418_135400.csv', function (csv) {
-			var busesO3D = new THREE.Object3D();
-			var data = $.csv2Array(csv);
-			for (var i = 1; i < data.length; i++) { //skip header line
-				var lat = data[i][5], lon = data[i][6], bearing = data[i][9];
-				if ((lat != "NaN") && (lon != "NaN")) {
-					lat = parseFloat(lat);
-					lon = parseFloat(lon);
-					//bus size is world coords i.e. metres*1000
-					var bus_cube = new THREE.Mesh(
-						new THREE.CubeGeometry(0.02,0.02,0.02/*2.52/1000,4.39/1000,11.23/1000*/), //whl
-						//new THREE.MeshBasicMaterial( { color: busColour, wireframe: false } )
-						new THREE.MeshLambertMaterial({color: busColour, ambient: busColour, reflectivity: 0.5, wireframe: false})
-					);
-					var p3d = convertCoords(lon,lat,0);
-					bus_cube.position.x=p3d.x/1000.0;
-					bus_cube.position.y=p3d.y/1000.0;
-					bus_cube.position.z=p3d.z/1000.0;
-					bus_cube.updateMatrix();
-					busesO3D.add(bus_cube);
+		$.get(this.urlRealTimeBuses,
+			function(inner_parent) {
+				return function (csv) {
+					inner_parent.busParent = new THREE.Object3D();
+					inner_parent.bbox = null;
+					var data = $.csv2Array(csv);
+					for (var i = 1; i < data.length; i++) { //skip header line
+						var lat = data[i][5], lon = data[i][6], bearing = data[i][9];
+						if ((data[i].length>=10) && (lat != "NaN") && (lon != "NaN")) {
+							lat = parseFloat(lat);
+							lon = parseFloat(lon);
+							//bus size is world coords i.e. metres*1000
+							var bus_cube = new THREE.Mesh(
+								new THREE.CubeGeometry(0.02,0.02,0.02/*2.52/1000,4.39/1000,11.23/1000*/), //whl
+								new THREE.MeshBasicMaterial( { color: inner_parent.busColour, wireframe: false } )
+								//new THREE.MeshLambertMaterial({color: inner_parent.busColour, ambient: inner_parent.busColour, reflectivity: 0.5, wireframe: false})
+							);
+							var p3d = convertCoords(lon,lat,0);
+							bus_cube.position.x=p3d.x/1000.0;
+							bus_cube.position.y=p3d.y/1000.0;
+							bus_cube.position.z=p3d.z/1000.0;
+							bus_cube.updateMatrix();
+							bus_cube.geometry.computeBoundingBox();
+							inner_parent.busParent.add(bus_cube);
+							//I need to set the bbox from the centre point like this, as getCompoundBoundingBox doesn't seem to add the centres (i.e. it's always [0.1,0.1,0.1] [-0.1,-0.1,-0.1]) - why?
+							if (inner_parent.bbox===null) {
+								inner_parent.bbox = new THREE.Box3(bus_cube.position,bus_cube.position);
+							}
+							else {
+								inner_parent.bbox.expandByPoint(bus_cube.position);
+							}
+						}
+					}
+					earth.add(inner_parent.busParent);
+					//DEBUG_addBoundingBox(busesO3D);
+					
+					//inner_parent.bbox = getCompoundBoundingBox(inner_parent.busParent); //this doesn't work (see above)
+					//console.log("bus",inner_parent.bbox);
+					if (ondataloaded) ondataloaded.call(); //report back that we've loaded the data
 				}
-			}
-			earth.add(busesO3D);
-			//DEBUG_addBoundingBox(busesO3D);
-		});
+			}(this)
+		);
 	}
 
 }
