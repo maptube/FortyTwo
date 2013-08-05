@@ -320,6 +320,8 @@ var BusDataLayer = {
 			function(inner_parent) {
 				return function (csv) {
 					inner_parent.busParent = new THREE.Object3D();
+					var geom = new THREE.Geometry();
+					var v_count=0;
 					inner_parent.bbox = null;
 					var data = $.csv2Array(csv);
 					for (var i = 1; i < data.length; i++) { //skip header line
@@ -328,31 +330,56 @@ var BusDataLayer = {
 							lat = parseFloat(lat);
 							lon = parseFloat(lon);
 							//bus size is world coords i.e. metres*1000
-							var bus_cube = new THREE.Mesh(
-								new THREE.CubeGeometry(0.02,0.02,0.02/*2.52/1000,4.39/1000,11.23/1000*/), //whl
-								new THREE.MeshBasicMaterial( { color: inner_parent.busColour, wireframe: false } )
-								//new THREE.MeshLambertMaterial({color: inner_parent.busColour, ambient: inner_parent.busColour, reflectivity: 0.5, wireframe: false})
-							);
+							//var bus_cube = new THREE.Mesh(
+							//	new THREE.CubeGeometry(0.02,0.02,0.02/*2.52/1000,4.39/1000,11.23/1000*/), //whl
+							//	new THREE.MeshBasicMaterial( { color: inner_parent.busColour, wireframe: false } )
+							//	//new THREE.MeshLambertMaterial({color: inner_parent.busColour, ambient: inner_parent.busColour, reflectivity: 0.5, wireframe: false})
+							//);
+							//var p3d = convertCoords(lon,lat,0);
+							//bus_cube.position.x=p3d.x/1000.0;
+							//bus_cube.position.y=p3d.y/1000.0;
+							//bus_cube.position.z=p3d.z/1000.0;
+							//bus_cube.updateMatrix();
+							//bus_cube.geometry.computeBoundingBox();
+							//inner_parent.busParent.add(bus_cube);
+							
+							//new code - everything is a single geometry
 							var p3d = convertCoords(lon,lat,0);
-							bus_cube.position.x=p3d.x/1000.0;
-							bus_cube.position.y=p3d.y/1000.0;
-							bus_cube.position.z=p3d.z/1000.0;
-							bus_cube.updateMatrix();
-							bus_cube.geometry.computeBoundingBox();
-							inner_parent.busParent.add(bus_cube);
+							var x=p3d.x/1000.0,y=p3d.y/1000.0,z=p3d.z/1000.0;
+							var v1=new THREE.Vector3(x-0.02,y+0.02,z-0.02);
+							var v2=new THREE.Vector3(x-0.02,y+0.02,z+0.02);
+							var v3=new THREE.Vector3(x+0.02,y+0.02,z+0.02);
+							var v4=new THREE.Vector3(x+0.02,y+0.02,z-0.02);
+							geom.vertices.push(v1);
+							geom.vertices.push(v2);
+							geom.vertices.push(v3);
+							geom.vertices.push(v4);
+							geom.faces.push(new THREE.Face3(v_count,v_count+1,v_count+2));
+							geom.faces.push(new THREE.Face3(v_count,v_count+2,v_count+3));
+							v_count+=4;
+							
+							//removed this for compound geom
 							//I need to set the bbox from the centre point like this, as getCompoundBoundingBox doesn't seem to add the centres (i.e. it's always [0.1,0.1,0.1] [-0.1,-0.1,-0.1]) - why?
-							if (inner_parent.bbox===null) {
-								inner_parent.bbox = new THREE.Box3(bus_cube.position,bus_cube.position);
-							}
-							else {
-								inner_parent.bbox.expandByPoint(bus_cube.position);
-							}
+							//if (inner_parent.bbox===null) {
+							//	inner_parent.bbox = new THREE.Box3(bus_cube.position,bus_cube.position);
+							//}
+							//else {
+							//	inner_parent.bbox.expandByPoint(bus_cube.position);
+							//}
 						}
 					}
+					geom.computeFaceNormals();
+					inner_parent.busParent.add(
+						new THREE.Mesh(
+							geom,
+							new THREE.MeshBasicMaterial( { color: inner_parent.busColour, wireframe: false } )
+						)
+					);
 					earth.add(inner_parent.busParent);
 					//DEBUG_addBoundingBox(busesO3D);
 					
-					//inner_parent.bbox = getCompoundBoundingBox(inner_parent.busParent); //this doesn't work (see above)
+					//siwtched back to this for comund geom
+					inner_parent.bbox = getCompoundBoundingBox(inner_parent.busParent); //this doesn't work (see above)
 					//console.log("bus",inner_parent.bbox);
 					if (ondataloaded) ondataloaded.call(); //report back that we've loaded the data
 				}
