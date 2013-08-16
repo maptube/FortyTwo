@@ -19,7 +19,8 @@ var StaticDataLayer = {
 		ext=ext.toLowerCase();
 		if (ext==".dae")
 			this.loadCollada(earth,this.url,ondataloaded);
-		//else if (ext==".obj")
+		else if (ext==".obj")
+			this.loadOBJ(earth,this.url,ondataloaded);
 		//else if (ext==".geojson")
 		//else if (ext==".json")
 		
@@ -60,6 +61,20 @@ var StaticDataLayer = {
 					//calculate data bounding box
 					this.bbox = getCompoundBoundingBox(mesh);
 					if (ondataloaded) ondataloaded.call(); //report back that we've loaded the data (needs to be in the callback loop)
+				}
+			}(this)
+		);
+	},
+	
+	loadOBJ : function (earth,filename,ondataloaded) {
+		var loader = new THREE.OBJLoader();
+		loader.load(filename,
+			function (inner_parent) {
+				return function callback(obj) {
+					inner_parent.mesh = obj;
+					inner_parent.mesh.name=extractFilenameWithoutExtension(filename);
+					earth.add(inner_parent.mesh);
+					this.bbox = getCompoundBoundingBox(inner_parent.mesh);
 				}
 			}(this)
 		);

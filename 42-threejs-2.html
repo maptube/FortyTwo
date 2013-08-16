@@ -21,11 +21,15 @@
 <script type="text/javascript" src="jQuery/includes/1.6/jquery-1.6.1.min.js"></script>
 <script type="text/javascript" src="jQuery/includes/jquery.csv-0.61.min.js"></script>
 <!--<script type="text/javascript" src="42-datalayer.js"></script>-->
+<script type="text/javascript" src="42-agents.js"></script>
 <script type="text/javascript" src="42-tfl.js"></script>
 <!--<script type="text/javascript" src="42-geojson.js"></script>-->
 <script type="text/javascript" src="42-staticdatalayer.js"></script>
 <script type="text/javascript" src="js/controls/FlyControls.js"></script>
+<script type="text/javascript" src="js/controls/TrackballControls.js"></script>
+<script type="text/javascript" src="js/controls/OrbitControls.js"></script>
 <script type="text/javascript" src="js/loaders/ColladaLoader.js"></script>
+<script type="text/javascript" src="js/loaders/OBJLoader.js"></script>
 <script type="text/javascript" src="js/stats.min.js"></script>
 <!--<script src="http://javascript.poly2tri.googlecode.com/hg/lib/js/Namespace.min.js"></script>-->
 <!--<script src="http://javascript.poly2tri.googlecode.com/hg/src/js/poly2tri.js"></script>-->
@@ -98,6 +102,11 @@ function init() {
 	//directionalLight.position.z = 1;
 	//directionalLight.position.normalize();
 	scene.add(directionalLight);
+	//var hemiLight = new THREE.HemisphereLight( 0xffffff, 0xffffff, 0.6 );
+	////hemiLight.color.setHSV( 0.6, 0.75, 1 );
+	////hemiLight.groundColor.setHSV( 0.095, 0.5, 1 );
+	//hemiLight.position.set( 0, 0, 11000 );
+	//scene.add( hemiLight );
 
 	
 	
@@ -150,11 +159,10 @@ function init() {
 		dataLayers[i].load(earth,updateCamera);
 
 	//don't forget this red wireframe cube is at the origin!!!!
-	geometry = new THREE.CubeGeometry( 200, 200, 200 );
-	material = new THREE.MeshBasicMaterial( { color: 0xff0000, wireframe: true } );
-	
-	mesh = new THREE.Mesh( geometry, material );
-	scene.add( mesh );
+	//geometry = new THREE.CubeGeometry( 200, 200, 200 );
+	//material = new THREE.MeshBasicMaterial( { color: 0xff0000, wireframe: true } );
+	//mesh = new THREE.Mesh( geometry, material );
+	//scene.add( mesh );
 	
 	//renderer = new THREE.CanvasRenderer();
 	renderer = new THREE.WebGLRenderer( { antialias: true, clearColor: 0xc0e0ff, clearAlpha: 1 } ); //was 0x000000 for black background clearColor
@@ -172,12 +180,31 @@ function init() {
 	document.body.appendChild( stats.domElement );
 	
 	//controls
-	controls = new THREE.FlyControls( camera );
-	controls.movementSpeed=25;
-	controls.domElement = renderer.domElement;
-	controls.rollSpeed = Math.PI/24;
-	controls.autoForward = false;
-	controls.dragToLook = false;
+	//Fly Controls
+	//controls = new THREE.FlyControls( camera );
+	//controls.movementSpeed=25;
+	//controls.domElement = renderer.domElement;
+	//controls.rollSpeed = Math.PI/24;
+	//controls.autoForward = false;
+	//controls.dragToLook = false;
+	//
+	//Trackball Controls
+	//controls = new THREE.TrackballControls( camera );
+	//controls.rotateSpeed = 0.01;
+	//controls.zoomSpeed = 0.01;
+	//controls.panSpeed = 0.01;
+	//controls.noZoom = false;
+	//controls.noPan = false;
+	//controls.staticMoving = true;
+	//controls.dynamicDampingFactor = 0.3;
+	//controls.keys = [ 65, 83, 68 ];
+	//controls.addEventListener( 'change', render );
+	//
+	//Orbit controls
+	controls = new THREE.OrbitControls( camera );
+	controls.userZoomSpeed = 1;
+	controls.userRotateSpeed = 1;
+	controls.userPanSpeed = 0.1;
 	
 	//new event handlers
 	//renderer.domElement.addEventListener('DOMMouseScroll', mousewheel, false); //does this work with any browsers?
@@ -249,6 +276,10 @@ function updateCamera() {
 	camera.lookAt(new THREE.Vector3(0,0,0));
 	//console.log(camera);
 	//console.log("camera height=",alt);
+	
+	controls.center.x=(x1+x2)/2;
+	controls.center.y=(y1+y2)/2;
+	controls.center.z=(z1+z2)/2;
 }
 
 //UI///////////////////////////////////
@@ -434,8 +465,9 @@ function animate() {
 	// note: three.js includes requestAnimationFrame shim
 	requestAnimationFrame( animate );
 	
-	mesh.rotation.x += 0.01;
-	mesh.rotation.y += 0.02;
+	//red cube
+	//mesh.rotation.x += 0.01;
+	//mesh.rotation.y += 0.02;
 	
 	for (var i=0; i<dataLayers.length; i++)
 		dataLayers[i].animate.call(dataLayers[i],earth); //otherwise the datalayer animate is in the scope of the animate event handler!

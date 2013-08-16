@@ -5,102 +5,129 @@
 
 var TubeDataLayer = {
 	bbox : null,						//bounding box for data which is set when it is loaded - this comes from the collada line network only
-	tube_network : null, 				//holds origin/destination links for tube network
-	tube_stationcodes : new Array(), 	//station lat/lon lookup from 3 letter code
-	tube_data : new Array(), 			//latest data download - this is what we're interpolating away from
-	tube_data_time : null, 				//this is the time that tube_data is valid for
+	//tube_network : null, 				//holds origin/destination links for tube network
+	//tube_stationcodes : new Array(), 	//station lat/lon lookup from 3 letter code
+	//tube_data : new Array(), 			//latest data download - this is what we're interpolating away from
+	//tube_data_time : null, 				//this is the time that tube_data is valid for
 	mesh_tubeLines : null,				//this is the mesh showing the position of the lines
+	
+	agentsHelper : Object.create(AgentsHelper),	//trying to make an abstraction of the agent animation to make the buses work
 
 	//constants defining where some of the data comes from
 	urlTubeNetworkJSON : 'realtime/tube-network.json',
 	urlStationCodesCSV : 'data/station-codes.csv',
 	urlTubeLinesDAE : 'data/TubeLines_thin_ECEF.DAE',
+	urlTubeLinesOBJ : 'data/TubeSplines_ECEF.obj',
 	urlRealTimeTubes : 'http://loggerhead.casa.ucl.ac.uk/api.svc/f/trackernet?pattern=trackernet_*.csv',
 
 	/**
-	* Animate tube trains using the network data and current position
+	* Second animate function using the helper
 	*/
 	animate : function (earth) {
-		if (this.tube_data_time==null) return; //not loaded yet...
-		if (this.tube_network==null) return;
+		//old if (this.tube_data_time==null) return; //not loaded yet...
+		//old if (this.tube_network==null) return;
+		if (this.agentsHelper.dataTime==null) return; //not loaded yet...
+		if (this.agentsHelper.odNetwork==null) return;
 		//var delta = clock.getDelta();
 		var now = new Date();
-		var elapsedSecs = (now-this.tube_data_time)/1000; //between data time and now
-		//scene.traverse...
+		this.agentsHelper.animate(now);
 		var inner_parent = this; //needed as traverse changes scope to window
 		earth.traverse(function (child) {
 			var anim_rec = null;
-			if (child.name) anim_rec=inner_parent.tube_data[child.name];
+			if (child.name) anim_rec=inner_parent.agentsHelper.agents[child.name];
 			if (anim_rec!=null) {
-				var d = anim_rec.timeToStation-elapsedSecs;
-				var lineCode = child.name[0]; //first letter of name is the line code
-				var lineRoutes = inner_parent.tube_network[lineCode];
-				if (lineRoutes==null) return; //exit early as this signals data not fully loaded asynchronously
-				
-				var route = lineRoutes[anim_rec.platformCode]; //0 or 1 representing up or down direction
-				if (d<0) {
-					//Already got to next station and gone beyond, so extrapolate position based on next station along route.
-					//Essentially, write a new anim record based on the tube following the runlink exactly.
-					//TODO: this isn't going to work if there is a choice of next station at a branch. For this you need to use
-					//the destination.
-					//FIX: TODO: if there is a choice, you could just sit at the station and wait rather than make a wrong guess?
-					for (i in route) {
-						var runlink=route[i];
-						if (runlink.o==anim_rec.stationCode) { //find a runlink originating at the station we've just reached in dir we're going
-							anim_rec.stationCode=runlink.d;
-							anim_rec.timeToStation=d+runlink.r+elapsedSecs; //calculated from d+= below and var d= line above
-							d+=runlink.r; //move d along this runlink by its negative amount
-							break;
-						}
-					}
-				}
-				//rest of code
-				if (d>0) { //i.e. we haven't got to the next station yet
-					//console.log("d="+d);
-					//get the relevant runlink
-					for (i in route) {
-						var runlink=route[i];
-						if (runlink.d==anim_rec.stationCode) { //check destination station for direction we're going in
-							//console.log(runlink);
-							//do the new position calculation here
-							var fromStation = inner_parent.tube_stationcodes[runlink.o];
-							var toStation = inner_parent.tube_stationcodes[runlink.d];
-							var lambda = (runlink.r-d)/runlink.r;
-							//console.log(lambda);
-							if (lambda<0) lambda=0; //math.min!
-							if (lambda>1) lambda=1; //shouldn't happen
-							//technically, this is spherical, not linear
-							//var dlon=toStation.lon-fromStation.lon, dlat=toStation.lat-fromStation.lat;
-							//var lon=fromStation.lon+lambda*dlon, lat=fromStation.lat+lambda*dlat;
-							var p1 = convertCoords(fromStation.lon,fromStation.lat,0); //height=0 above earth
-							var p2 = convertCoords(toStation.lon,toStation.lat,0);
-							var ox=child.position.x, oy=child.position.y, oz=child.position.z;
-							child.position.x=(p1.x+lambda*(p2.x-p1.x))/1000;
-							child.position.y=(p1.y+lambda*(p2.y-p1.y))/1000;
-							child.position.z=(p1.z+lambda*(p2.z-p1.z))/1000;
-							//var vec = new THREE.Vector3();
-							//vec.x=p2.x/1000; vec.y=p2.y/1000; vec.z=p2.z/1000;
-							//careful with this as it modifies p2 i.e. don't use p2 again!
-							child.lookAt(p2.multiplyScalar(1/1000)); //align cube towards destination station
-							
-							//child.calculateBoundingBox();
-							//child.geometry.verticesNeedUpdate = true;
-							//child.geometry.normalsNeedUpdate = true;
-							//child.geometry.elementsNeedUpdate = true;
-							//child.geometry.buffersNeedUpdate = true;
-							//child.geometry.computeBoundingBox();
-							//child.geometry.computeBoundingSphere();
-							//console.log(d,lambda,runlink,ox,oy,oz,p1,p2,child.position.x,child.position.y,child.position.z);
-							//update?
-							//child.verticesNeedUpdate = true;
-							break;
-						}
-					}
-				}
-				else {} //stop animating as we're past the next station and need the graph to find out where to go next
+				child.position.x=(anim_rec.position.x)/1000;
+				child.position.y=(anim_rec.position.y)/1000;
+				child.position.z=(anim_rec.position.z)/1000;
+				child.lookAt(anim_rec.forward.multiplyScalar(1/1000)); //align cube towards destination station (does this modify anim_rec?)
 			}
 		});
 	},
+	
+	/**
+	* Animate tube trains using the network data and current position
+	*/
+	//animate_old : function (earth) {
+	//	if (this.tube_data_time==null) return; //not loaded yet...
+	//	if (this.tube_network==null) return;
+	//	//var delta = clock.getDelta();
+	//	var now = new Date();
+	//	var elapsedSecs = (now-this.tube_data_time)/1000; //between data time and now
+	//	//scene.traverse...
+	//	var inner_parent = this; //needed as traverse changes scope to window
+	//	earth.traverse(function (child) {
+	//		var anim_rec = null;
+	//		if (child.name) anim_rec=inner_parent.tube_data[child.name];
+	//		if (anim_rec!=null) {
+	//			var d = anim_rec.timeToStation-elapsedSecs;
+	//			var lineCode = child.name[0]; //first letter of name is the line code
+	//			var lineRoutes = inner_parent.tube_network[lineCode];
+	//			if (lineRoutes==null) return; //exit early as this signals data not fully loaded asynchronously
+	//			
+	//			var route = lineRoutes[anim_rec.platformCode]; //0 or 1 representing up or down direction
+	//			if (d<0) {
+	//				//Already got to next station and gone beyond, so extrapolate position based on next station along route.
+	//				//Essentially, write a new anim record based on the tube following the runlink exactly.
+	//				//TODO: this isn't going to work if there is a choice of next station at a branch. For this you need to use
+	//				//the destination.
+	//				//FIX: TODO: if there is a choice, you could just sit at the station and wait rather than make a wrong guess?
+	//				for (i in route) {
+	//					var runlink=route[i];
+	//					if (runlink.o==anim_rec.stationCode) { //find a runlink originating at the station we've just reached in dir we're going
+	//						anim_rec.stationCode=runlink.d;
+	//						anim_rec.timeToStation=d+runlink.r+elapsedSecs; //calculated from d+= below and var d= line above
+	//						d+=runlink.r; //move d along this runlink by its negative amount
+	//						break;
+	//					}
+	//				}
+	//			}
+	//			//rest of code
+	//			if (d>0) { //i.e. we haven't got to the next station yet
+	//				//console.log("d="+d);
+	//				//get the relevant runlink
+	//				for (i in route) {
+	//					var runlink=route[i];
+	//					if (runlink.d==anim_rec.stationCode) { //check destination station for direction we're going in
+	//						//console.log(runlink);
+	//						//do the new position calculation here
+	//						var fromStation = inner_parent.tube_stationcodes[runlink.o];
+	//						var toStation = inner_parent.tube_stationcodes[runlink.d];
+	//						var lambda = (runlink.r-d)/runlink.r;
+	//						//console.log(lambda);
+	//						if (lambda<0) lambda=0; //math.min!
+	//						if (lambda>1) lambda=1; //shouldn't happen
+	//						//technically, this is spherical, not linear
+	//						//var dlon=toStation.lon-fromStation.lon, dlat=toStation.lat-fromStation.lat;
+	//						//var lon=fromStation.lon+lambda*dlon, lat=fromStation.lat+lambda*dlat;
+	//						var p1 = convertCoords(fromStation.lon,fromStation.lat,0); //height=0 above earth
+	//						var p2 = convertCoords(toStation.lon,toStation.lat,0);
+	//						var ox=child.position.x, oy=child.position.y, oz=child.position.z;
+	//						child.position.x=(p1.x+lambda*(p2.x-p1.x))/1000;
+	//						child.position.y=(p1.y+lambda*(p2.y-p1.y))/1000;
+	//						child.position.z=(p1.z+lambda*(p2.z-p1.z))/1000;
+	//						//var vec = new THREE.Vector3();
+	//						//vec.x=p2.x/1000; vec.y=p2.y/1000; vec.z=p2.z/1000;
+	//						//careful with this as it modifies p2 i.e. don't use p2 again!
+	//						child.lookAt(p2.multiplyScalar(1/1000)); //align cube towards destination station
+	//						
+	//						//child.calculateBoundingBox();
+	//						//child.geometry.verticesNeedUpdate = true;
+	//						//child.geometry.normalsNeedUpdate = true;
+	//						//child.geometry.elementsNeedUpdate = true;
+	//						//child.geometry.buffersNeedUpdate = true;
+	//						//child.geometry.computeBoundingBox();
+	//						//child.geometry.computeBoundingSphere();
+	//						//console.log(d,lambda,runlink,ox,oy,oz,p1,p2,child.position.x,child.position.y,child.position.z);
+	//						//update?
+	//						//child.verticesNeedUpdate = true;
+	//						break;
+	//					}
+	//				}
+	//			}
+	//			else {} //stop animating as we're past the next station and need the graph to find out where to go next
+	//		}
+	//	});
+	//},
 
 
 	/**
@@ -139,6 +166,7 @@ var TubeDataLayer = {
 	load : function (earth,ondataloaded) {
 		this.loadnetwork();
 		this.loadtubelinesmesh(earth,ondataloaded);
+		//this.loadtubelinesmeshOBJ(earth,ondataloaded); //OBJ can't load lines in THREE.JS!
 		this.loadtubes(earth);
 	},
 	
@@ -151,7 +179,8 @@ var TubeDataLayer = {
 		$.getJSON(this.urlTubeNetworkJSON,
 			function (inner_parent) {
 				return function(json) {
-					inner_parent.tube_network = json;
+					//old inner_parent.tube_network = json;
+					inner_parent.agentsHelper.setODNetwork(json);
 				}
 			}(this)
 		);
@@ -164,7 +193,9 @@ var TubeDataLayer = {
 						var stn = data[i][0], lon = data[i][3], lat = data[i][4];
 						lat = parseFloat(lat);
 						lon = parseFloat(lon);
-						inner_parent.tube_stationcodes[stn]={ 'lat': lat, 'lon': lon };
+						//old inner_parent.tube_stationcodes[stn]={ 'lat': lat, 'lon': lon };
+						var p1 = convertCoords(lon,lat,0); //height=0 above earth
+						inner_parent.agentsHelper.vertexList[stn]={ 'x': p1.x, 'y': p1.y, 'z': p1.z};
 					}
 				}
 			}(this)
@@ -243,6 +274,42 @@ var TubeDataLayer = {
 	},
 	
 	/**
+	* Load the tube lines data (visual) from an obj file. This is really a copy of the static data version, but with custom materials.
+	*/
+	//loadtubelinesmeshOBJ : function(earth,ondataloaded) {
+	//	var loader = new THREE.OBJLoader();
+	//	loader.load(this.urlTubeLinesOBJ,
+	//		function(inner_parent) { //need to use closure to allow obj load event access to "this" object
+	//			return function (obj) {
+	//				inner_parent.mesh_tubeLines = new THREE.Object3D(); //obj;
+	//				obj.traverse( function ( child ) {
+	//					if ( child instanceof THREE.Mesh ) {
+	//						//child.material.map = texture;
+	//						var mat_simple = new THREE.MeshLambertMaterial({color: 0x000000, ambient: 0x000000, reflectivity: 0.5, wireframe: false});
+	//						child.material = mat_simple;
+	//						inner_parent.mesh_tubeLines.add(child);
+	//					}
+	//				} );
+	//				//for (var i in obj.children) {
+	//				//	var child = obj.children[i];
+	//				//	//all names are of the format Line_V
+	//				//	var mat_simple = new THREE.MeshLambertMaterial({color: 0x000000, ambient: 0x000000, reflectivity: 0.5, wireframe: false});
+	//				//	child.material = mat_simple;
+	//				//	var g = child.mesh.geometry;
+	//				//	var mesh = new THREE.Mesh(g,mat_simple);
+	//				//	mesh.name=child.name;
+	//				//	inner_parent.mesh_tubeLines.add(mesh);
+	//				//}
+	//				inner_parent.mesh_tubeLines.scale.x = inner_parent.mesh_tubeLines.scale.y = inner_parent.mesh_tubeLines.scale.z = 0.1;
+	//				earth.add(inner_parent.mesh_tubeLines);
+	//		
+	//				if (ondataloaded) ondataloaded.call(); //report back that we've loaded the data
+	//			}
+	//		}(this)
+	//	);
+	//},
+	
+	/**
 	* Load data for realtime tube positions
 	* Victoria 2009 stock is 8 cars, 133.28m long, 2.68m wide and 2.88m high
 	*
@@ -250,8 +317,9 @@ var TubeDataLayer = {
 	*/
 	loadtubes : function (earth) {
 		//linecode,tripnumber,setnumber,lat,lon,east,north,timetostation(secs),location,stationcode,stationname,platform,destination,destinationcode
-		this.tube_data_time = new Date(); //HACK! assume data is for now, not archive data
-		this.tube_data = new Array();
+		//old this.tube_data_time = new Date(); //HACK! assume data is for now, not archive data
+		this.agentsHelper.setDataTime(new Date()); //HACK! assume data is for now, not archive data
+		//old this.tube_data = new Array();
 		$.get(this.urlRealTimeTubes,
 			function(inner_parent) {
 				return function (csv) { //latest data
@@ -265,7 +333,7 @@ var TubeDataLayer = {
 							lon = parseFloat(lon);
 							//tube size is world coords i.e. metres*1000
 							var tube_cube = new THREE.Mesh(
-								new THREE.CubeGeometry(0.04,0.04,0.2/*2.68/1000,2.88/1000,133.28/1000*/), //whl
+								new THREE.CubeGeometry(0.02,0.02,0.1/*2.68/1000,2.88/1000,133.28/1000*/), //whl
 								new THREE.MeshBasicMaterial( { color: lineColour, wireframe: false } )
 							);
 							tube_cube.name=lineCode+"_"+tripNum+"_"+setNum;
@@ -277,13 +345,25 @@ var TubeDataLayer = {
 							earth.add(tube_cube);
 							//tube_cube.add(new THREE.Axes()); //doesn't work
 							//now add a separate data record for animation
-							inner_parent.tube_data[lineCode+"_"+tripNum+"_"+setNum] = {
-								'lat' : lat,
-								'lon' : lon,
-								'timeToStation' : timeToStation,
-								'stationCode' : stationCode,
+							//old
+							//inner_parent.tube_data[lineCode+"_"+tripNum+"_"+setNum] = {
+							//	'lat' : lat,
+							//	'lon' : lon,
+							//	'timeToStation' : timeToStation,
+							//	'stationCode' : stationCode,
+							//	'platform' : platform,
+							//	'platformCode' : platformCode
+							//};
+							/////////////////////ADD ANIM HELPER REC
+							inner_parent.agentsHelper.agents[lineCode+"_"+tripNum+"_"+setNum] = {
+								'name' : lineCode+"_"+tripNum+"_"+setNum,
+								'routeCode' : lineCode,
 								'platform' : platform,
-								'platformCode' : platformCode
+								'directionCode' : platformCode,
+								'stationCode' : stationCode,
+								'timeToStation' : timeToStation,
+								'forward' : new THREE.Vector3(),
+								'position' : p3d
 							};
 						}
 					}
@@ -343,20 +423,36 @@ var BusDataLayer = {
 							//bus_cube.geometry.computeBoundingBox();
 							//inner_parent.busParent.add(bus_cube);
 							
-							//new code - everything is a single geometry
+							//new code - everything is a single geometry - could really do this with arrays
 							var p3d = convertCoords(lon,lat,0);
 							var x=p3d.x/1000.0,y=p3d.y/1000.0,z=p3d.z/1000.0;
-							var v1=new THREE.Vector3(x-0.02,y+0.02,z-0.02);
-							var v2=new THREE.Vector3(x-0.02,y+0.02,z+0.02);
-							var v3=new THREE.Vector3(x+0.02,y+0.02,z+0.02);
-							var v4=new THREE.Vector3(x+0.02,y+0.02,z-0.02);
+							var v0=new THREE.Vector3(x-0.01,y-0.01,z-0.01);
+							var v1=new THREE.Vector3(x-0.01,y-0.01,z+0.01);
+							var v2=new THREE.Vector3(x+0.01,y-0.01,z+0.01);
+							var v3=new THREE.Vector3(x+0.01,y-0.01,z-0.01);
+							var v4=new THREE.Vector3(x-0.01,y+0.01,z-0.01);
+							var v5=new THREE.Vector3(x-0.01,y+0.01,z+0.01);
+							var v6=new THREE.Vector3(x+0.01,y+0.01,z+0.01);
+							var v7=new THREE.Vector3(x+0.01,y+0.01,z-0.01);
+							geom.vertices.push(v0);
 							geom.vertices.push(v1);
 							geom.vertices.push(v2);
 							geom.vertices.push(v3);
 							geom.vertices.push(v4);
-							geom.faces.push(new THREE.Face3(v_count,v_count+1,v_count+2));
-							geom.faces.push(new THREE.Face3(v_count,v_count+2,v_count+3));
-							v_count+=4;
+							geom.vertices.push(v5);
+							geom.vertices.push(v6);
+							geom.vertices.push(v7);
+							geom.faces.push(new THREE.Face3(v_count,v_count+4,v_count+7));
+							geom.faces.push(new THREE.Face3(v_count,v_count+7,v_count+3));
+							geom.faces.push(new THREE.Face3(v_count+1,v_count+5,v_count+4));
+							geom.faces.push(new THREE.Face3(v_count+1,v_count+4,v_count+0));
+							geom.faces.push(new THREE.Face3(v_count+2,v_count+6,v_count+5));
+							geom.faces.push(new THREE.Face3(v_count+2,v_count+5,v_count+1));
+							geom.faces.push(new THREE.Face3(v_count+3,v_count+7,v_count+6));
+							geom.faces.push(new THREE.Face3(v_count+3,v_count+6,v_count+2));
+							geom.faces.push(new THREE.Face3(v_count+4,v_count+5,v_count+6));
+							geom.faces.push(new THREE.Face3(v_count+4,v_count+6,v_count+7));
+							v_count+=8;
 							
 							//removed this for compound geom
 							//I need to set the bbox from the centre point like this, as getCompoundBoundingBox doesn't seem to add the centres (i.e. it's always [0.1,0.1,0.1] [-0.1,-0.1,-0.1]) - why?
