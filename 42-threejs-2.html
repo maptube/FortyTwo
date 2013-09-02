@@ -23,6 +23,7 @@
 <!--<script type="text/javascript" src="42-datalayer.js"></script>-->
 <script type="text/javascript" src="42-agents.js"></script>
 <script type="text/javascript" src="42-tfl.js"></script>
+<script type="text/javascript" src="42-metodatapoint.js"></script>
 <!--<script type="text/javascript" src="42-geojson.js"></script>-->
 <script type="text/javascript" src="42-staticdatalayer.js"></script>
 <script type="text/javascript" src="js/controls/FlyControls.js"></script>
@@ -105,7 +106,7 @@ function init() {
 	//var hemiLight = new THREE.HemisphereLight( 0xffffff, 0xffffff, 0.6 );
 	////hemiLight.color.setHSV( 0.6, 0.75, 1 );
 	////hemiLight.groundColor.setHSV( 0.095, 0.5, 1 );
-	//hemiLight.position.set( 0, 0, 11000 );
+	//hemiLight.position.set( 0, 0, 0 );
 	//scene.add( hemiLight );
 
 	
@@ -148,8 +149,9 @@ function init() {
 	//initialisation: add data layers here
 	dataLayers.push(Object.create(TubeDataLayer));
 	dataLayers.push(Object.create(BusDataLayer));
+	//dataLayers.push(Object.create(MetoDataPointLayer));
 	//dataLayers.push(Object.create(StaticDataLayer).setURL('data/TQ_Building_530000_180000_CARTESIAN.DAE'));
-	var river = Object.create(StaticDataLayer)
+	var river = Object.create(StaticDataLayer);
 	river.setURL('data/TQ_TidalWater_503500_155500_CARTESIAN.DAE');
 	dataLayers.push(river);
 	//dataLayers.push(Object.create(StaticDataLayer).setURL('data/TM_WORLD_BORDERS_SIMPL-0.3_WGS84.geojson'));
@@ -165,6 +167,7 @@ function init() {
 	//scene.add( mesh );
 	
 	//renderer = new THREE.CanvasRenderer();
+	//clearColor: 0xc0e0ff (blue)
 	renderer = new THREE.WebGLRenderer( { antialias: true, clearColor: 0xc0e0ff, clearAlpha: 1 } ); //was 0x000000 for black background clearColor
 	renderer.setSize( window.innerWidth, window.innerHeight );
 	

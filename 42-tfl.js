@@ -378,13 +378,28 @@ var TubeDataLayer = {
 
 //////////////////////////////////////////////////
 //buses
+//TODO: make a separate layer for the river services
 
 var BusDataLayer = {
 
 	bbox : null,
 	busParent : null, //object that is the parent to all the bus cubes
+	agentsHelper : Object.create(AgentsHelper), //used to animate the buses
 	
 	urlRealTimeBuses : 'realtime/countdown_20130418_135400.csv',
+	//urlStopCodesJSON : 'realtime/countdown/stops.json',
+	urlStopCodesJSON : 'realtime/countdown/stops_json.csv', //have to do this as it's not valid json
+	
+	cubeGeom : [
+		[ -0.01, -0.01, -0.01 ],
+		[ -0.01, -0.01,  0.01 ],
+		[  0.01, -0.01,  0.01 ],
+		[  0.01, -0.01, -0.01 ],
+		[ -0.01,  0.01, -0.01 ],
+		[ -0.01,  0.01,  0.01 ],
+		[  0.01,  0.01,  0.01 ],
+		[  0.01,  0.01, -0.01 ]
+	],
 	
 	/**
 	* Load bus positions from countdown csv datafile
@@ -392,9 +407,41 @@ var BusDataLayer = {
 	*/
 	busColour : 0xdc241f, //can you believe there is a TfL colour document defining this?
 	
-	animate : function (earth) {},
+	animate : function (earth) {
+		if (this.agentsHelper.dataTime==null) return; //not loaded yet...
+		//if (this.agentsHelper.odNetwork==null) return;
+		if (this.agentsHelper.vertexList==null) return;
+		if ((this.busParent)&&(this.busParent.children.length>0)) { //first child of Object3D is a mesh
+			var geom = this.busParent.children[0].geometry;
+			var now = new Date();
+			this.agentsHelper.simpleAnimate(now);
+			//now need to go through all the agents and move the points in the mesh
+			for (var i in this.agentsHelper.agents) {
+				var anim_rec = this.agentsHelper.agents[i];
+				var vindex = anim_rec.vindex;
+				for (var p=0; p<8; p++) {
+					geom.vertices[vindex+p].x=this.cubeGeom[p][0]+anim_rec.position.x/1000.0;
+					geom.vertices[vindex+p].y=this.cubeGeom[p][1]+anim_rec.position.y/1000.0;
+					geom.vertices[vindex+p].z=this.cubeGeom[p][2]+anim_rec.position.z/1000.0;
+					//how are you going to spin it?
+					//child.lookAt(anim_rec.forward.multiplyScalar(1/1000));
+				}
+			}
+		
+			//remember to signal geometry changed
+			geom.verticesNeedUpdate = true;
+			geom.normalsNeedUpdate = true;
+			geom.elementsNeedUpdate = true;
+			geom.buffersNeedUpdate = true;
+			//geom.computeBoundingBox(); //frame-rate picks up if you omit this (slight bad)
+			//geom.computeBoundingSphere();
+		}
+	},
 	
 	load : function (earth,ondataloaded) {
+		this.loadNetwork();
+		
+		this.agentsHelper.setDataTime(new Date()); //HACK! assume data is for now, not archive data
 		//route,destination,vehicleid,registration,tripid,lat,lon,east,north,bearing,expectedtime(utc),timetostation(secs),linkruntime,detailsstopcode,fromstopcode,tostopcode
 		$.get(this.urlRealTimeBuses,
 			function(inner_parent) {
@@ -405,7 +452,13 @@ var BusDataLayer = {
 					inner_parent.bbox = null;
 					var data = $.csv2Array(csv);
 					for (var i = 1; i < data.length; i++) { //skip header line
-						var lat = data[i][5], lon = data[i][6], bearing = data[i][9];
+						var lat = data[i][5], lon = data[i][6], bearing = parseFloat(data[i][9]);
+						var reg_no = data[i][3]; //unique ID
+						var route = data[i][0]; //bus number (check this?)
+						var timeToStation = parseFloat(data[i][11]);
+						var runlink = parseInt(data[i][12]);
+						var fromStation = data[i][14];
+						var toStation = data[i][15];
 						if ((data[i].length>=10) && (lat != "NaN") && (lon != "NaN")) {
 							lat = parseFloat(lat);
 							lon = parseFloat(lon);
@@ -452,6 +505,20 @@ var BusDataLayer = {
 							geom.faces.push(new THREE.Face3(v_count+3,v_count+6,v_count+2));
 							geom.faces.push(new THREE.Face3(v_count+4,v_count+5,v_count+6));
 							geom.faces.push(new THREE.Face3(v_count+4,v_count+6,v_count+7));
+							inner_parent.agentsHelper.agents[reg_no] = {
+								'name' : reg_no,
+								'routeCode' : route,
+								'platform' : '',
+								'directionCode' : bearing,
+								//'stationCode' : stationCode,
+								'timeToStation' : timeToStation,
+								'forward' : new THREE.Vector3(),
+								'position' : p3d,
+								'vindex' : v_count,	//add this as needed to move points in mesh
+								'fromStation' : fromStation,
+								'toStation' : toStation,
+								'runlink' : runlink
+							};
 							v_count+=8;
 							
 							//removed this for compound geom
@@ -468,7 +535,9 @@ var BusDataLayer = {
 					inner_parent.busParent.add(
 						new THREE.Mesh(
 							geom,
-							new THREE.MeshBasicMaterial( { color: inner_parent.busColour, wireframe: false } )
+							//new THREE.MeshBasicMaterial( { color: inner_parent.busColour, wireframe: false }
+							new THREE.MeshLambertMaterial( {color: inner_parent.busColour, ambient: inner_parent.busColour, reflectivity: 0.65, wireframe: false }
+							)
 						)
 					);
 					earth.add(inner_parent.busParent);
@@ -478,6 +547,43 @@ var BusDataLayer = {
 					inner_parent.bbox = getCompoundBoundingBox(inner_parent.busParent); //this doesn't work (see above)
 					//console.log("bus",inner_parent.bbox);
 					if (ondataloaded) ondataloaded.call(); //report back that we've loaded the data
+				}
+			}(this)
+		);
+	},
+	
+	/**
+	* Load bus network data for the origin destination links of the network and the stop locations that the nodes represent
+	* Actually, only loading the vertex list for now
+	*/
+	loadNetwork : function () {
+		//had to use closures to get the object data to the xmlhttp request complete event
+		//$.getJSON(this.urlTubeNetworkJSON,
+		//	function (inner_parent) {
+		//		return function(json) {
+		//			//old inner_parent.tube_network = json;
+		//			inner_parent.agentsHelper.setODNetwork(json);
+		//		}
+		//	}(this)
+		//);
+		//load bus stop data
+		//TODO: here.....
+		//need to convert stop codes json data into vertex list used by agents helper vertex list
+		//This isn't strictly correct JSON as each line is an array and it's missing the commas.
+		//Load as CSV although it's calling itself JSON.
+		//[0,"Gospel Oak Station","34506","72579","490001119W","STBC",242,"GP",0,51.55475,-0.151763]
+		//34506 is StopID, 72579 is StopCode1, 490001119W is StopCode2 - which do they use? StopID.
+		$.get(this.urlStopCodesJSON,
+			function(inner_parent) {
+				return function(csv) {
+					var data = $.csv2Array(csv);
+					for (var i = 1; i < data.length; i++) { //skip header line [4,"1.0",1366642383630]
+						var stn = data[i][2], lon = data[i][10], lat = data[i][9];
+						lat = parseFloat(lat);
+						lon = parseFloat(lon); //this will still have the ] on the end
+						var p1 = convertCoords(lon,lat,0); //height=0 above earth
+						inner_parent.agentsHelper.vertexList[stn]={ 'x': p1.x, 'y': p1.y, 'z': p1.z};
+					}
 				}
 			}(this)
 		);

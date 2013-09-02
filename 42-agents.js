@@ -15,6 +15,7 @@ var AnimRec = {
 	timeToStation : null,
 	forward : new THREE.Vector3(),
 	position : new THREE.Vector3()
+	//fromStation, toStation for simple anim_recs
 }
 
 var AgentsHelper = {
@@ -105,5 +106,34 @@ var AgentsHelper = {
 				else {} //stop animating as we're past the next station and need the graph to find out where to go next
 			}
 		}
+	},
+	
+	/**
+	* Simple animation between two points (from and toStation in anim_rec) used when there is no
+	* network graph to work from - this.odNetwork==null
+	* Also assumes there is a runlink in the anim_rec.
+	*/
+	simpleAnimate : function(nowTime) {
+		var elapsedSecs = (nowTime-this.dataTime)/1000; //between data time and now
+		for (var i in this.agents) { //i is actually the name of the agent, not an index number
+			var anim_rec = this.agents[i];
+			if (anim_rec!=null) {
+				var d = anim_rec.timeToStation-elapsedSecs;
+				//could assert that the following three exist? from/toStation + runlink
+				var p1 = this.vertexList[anim_rec.fromStation]; //lookup position using name
+				var p2 = this.vertexList[anim_rec.toStation];
+				if ((p1==null)||(p2==null)) continue;
+				var runlink = anim_rec.runlink;
+				var lambda = (runlink-d)/runlink;
+				if (lambda<0) lambda=0; //math.min!
+				if (lambda>1) lambda=1; //shouldn't happen
+				//technically, this is spherical, not linear
+				anim_rec.position.x=(p1.x+lambda*(p2.x-p1.x));
+				anim_rec.position.y=(p1.y+lambda*(p2.y-p1.y));
+				anim_rec.position.z=(p1.z+lambda*(p2.z-p1.z));
+				anim_rec.forward.x=p2.x; anim_rec.forward.y=p2.y; anim_rec.forward.z=p2.z; //this is the point we're moving towards, so do a child.lookAt to orient the real object
+			}
+		}
 	}
+	
 }
