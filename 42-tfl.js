@@ -11,7 +11,8 @@ var TubeDataLayer = {
 	//tube_data_time : null, 				//this is the time that tube_data is valid for
 	mesh_tubeLines : null,				//this is the mesh showing the position of the lines
 	
-	agentsHelper : Object.create(AgentsHelper),	//trying to make an abstraction of the agent animation to make the buses work
+	//tubeAgentsHelper : Object.create(AgentsHelper),	//trying to make an abstraction of the agent animation to make the buses work
+	tubeAgentsHelper : new AgentsHelper2(),
 
 	//constants defining where some of the data comes from
 	urlTubeNetworkJSON : 'realtime/tube-network.json',
@@ -26,15 +27,15 @@ var TubeDataLayer = {
 	animate : function (earth) {
 		//old if (this.tube_data_time==null) return; //not loaded yet...
 		//old if (this.tube_network==null) return;
-		if (this.agentsHelper.dataTime==null) return; //not loaded yet...
-		if (this.agentsHelper.odNetwork==null) return;
+		if (this.tubeAgentsHelper.dataTime==null) return; //not loaded yet...
+		if (this.tubeAgentsHelper.odNetwork==null) return;
 		//var delta = clock.getDelta();
 		var now = new Date();
-		this.agentsHelper.animate(now);
+		this.tubeAgentsHelper.animate(now);
 		var inner_parent = this; //needed as traverse changes scope to window
 		earth.traverse(function (child) {
 			var anim_rec = null;
-			if (child.name) anim_rec=inner_parent.agentsHelper.agents[child.name];
+			if (child.name) anim_rec=inner_parent.tubeAgentsHelper.agents[child.name];
 			if (anim_rec!=null) {
 				child.position.x=(anim_rec.position.x)/1000;
 				child.position.y=(anim_rec.position.y)/1000;
@@ -180,7 +181,7 @@ var TubeDataLayer = {
 			function (inner_parent) {
 				return function(json) {
 					//old inner_parent.tube_network = json;
-					inner_parent.agentsHelper.setODNetwork(json);
+					inner_parent.tubeAgentsHelper.setODNetwork(json);
 				}
 			}(this)
 		);
@@ -195,7 +196,7 @@ var TubeDataLayer = {
 						lon = parseFloat(lon);
 						//old inner_parent.tube_stationcodes[stn]={ 'lat': lat, 'lon': lon };
 						var p1 = convertCoords(lon,lat,0); //height=0 above earth
-						inner_parent.agentsHelper.vertexList[stn]={ 'x': p1.x, 'y': p1.y, 'z': p1.z};
+						inner_parent.tubeAgentsHelper.vertexList[stn]={ 'x': p1.x, 'y': p1.y, 'z': p1.z};
 					}
 				}
 			}(this)
@@ -318,7 +319,7 @@ var TubeDataLayer = {
 	loadtubes : function (earth) {
 		//linecode,tripnumber,setnumber,lat,lon,east,north,timetostation(secs),location,stationcode,stationname,platform,destination,destinationcode
 		//old this.tube_data_time = new Date(); //HACK! assume data is for now, not archive data
-		this.agentsHelper.setDataTime(new Date()); //HACK! assume data is for now, not archive data
+		this.tubeAgentsHelper.setDataTime(new Date()); //HACK! assume data is for now, not archive data
 		//old this.tube_data = new Array();
 		$.get(this.urlRealTimeTubes,
 			function(inner_parent) {
@@ -355,7 +356,7 @@ var TubeDataLayer = {
 							//	'platformCode' : platformCode
 							//};
 							/////////////////////ADD ANIM HELPER REC
-							inner_parent.agentsHelper.agents[lineCode+"_"+tripNum+"_"+setNum] = {
+							inner_parent.tubeAgentsHelper.agents[lineCode+"_"+tripNum+"_"+setNum] = {
 								'name' : lineCode+"_"+tripNum+"_"+setNum,
 								'routeCode' : lineCode,
 								'platform' : platform,
@@ -384,12 +385,15 @@ var BusDataLayer = {
 
 	bbox : null,
 	busParent : null, //object that is the parent to all the bus cubes
-	agentsHelper : Object.create(AgentsHelper), //used to animate the buses
+	//busAgentsHelper : Object.create(AgentsHelper), //used to animate the buses
+	busAgentsHelper : new AgentsHelper2(),
 	
-	urlRealTimeBuses : 'realtime/countdown_20130418_135400.csv',
+	//urlRealTimeBuses : 'realtime/countdown_20130418_135400.csv',
+	urlRealTimeBuses : 'http://loggerhead.casa.ucl.ac.uk/api.svc/f/countdown?pattern=countdown_*.csv',
 	//urlStopCodesJSON : 'realtime/countdown/stops.json',
 	urlStopCodesJSON : 'realtime/countdown/stops_json.csv', //have to do this as it's not valid json
 	
+	//this specifies the bus vertex geometry
 	cubeGeom : [
 		[ -0.01, -0.01, -0.01 ],
 		[ -0.01, -0.01,  0.01 ],
@@ -408,16 +412,16 @@ var BusDataLayer = {
 	busColour : 0xdc241f, //can you believe there is a TfL colour document defining this?
 	
 	animate : function (earth) {
-		if (this.agentsHelper.dataTime==null) return; //not loaded yet...
-		//if (this.agentsHelper.odNetwork==null) return;
-		if (this.agentsHelper.vertexList==null) return;
+		if (this.busAgentsHelper.dataTime==null) return; //not loaded yet...
+		//if (this.busAgentsHelper.odNetwork==null) return;
+		if (this.busAgentsHelper.vertexList==null) return;
 		if ((this.busParent)&&(this.busParent.children.length>0)) { //first child of Object3D is a mesh
 			var geom = this.busParent.children[0].geometry;
 			var now = new Date();
-			this.agentsHelper.simpleAnimate(now);
+			this.busAgentsHelper.simpleAnimate(now);
 			//now need to go through all the agents and move the points in the mesh
-			for (var i in this.agentsHelper.agents) {
-				var anim_rec = this.agentsHelper.agents[i];
+			for (var i in this.busAgentsHelper.agents) {
+				var anim_rec = this.busAgentsHelper.agents[i];
 				var vindex = anim_rec.vindex;
 				for (var p=0; p<8; p++) {
 					geom.vertices[vindex+p].x=this.cubeGeom[p][0]+anim_rec.position.x/1000.0;
@@ -441,7 +445,7 @@ var BusDataLayer = {
 	load : function (earth,ondataloaded) {
 		this.loadNetwork();
 		
-		this.agentsHelper.setDataTime(new Date()); //HACK! assume data is for now, not archive data
+		this.busAgentsHelper.setDataTime(new Date()); //HACK! assume data is for now, not archive data
 		//route,destination,vehicleid,registration,tripid,lat,lon,east,north,bearing,expectedtime(utc),timetostation(secs),linkruntime,detailsstopcode,fromstopcode,tostopcode
 		$.get(this.urlRealTimeBuses,
 			function(inner_parent) {
@@ -505,7 +509,7 @@ var BusDataLayer = {
 							geom.faces.push(new THREE.Face3(v_count+3,v_count+6,v_count+2));
 							geom.faces.push(new THREE.Face3(v_count+4,v_count+5,v_count+6));
 							geom.faces.push(new THREE.Face3(v_count+4,v_count+6,v_count+7));
-							inner_parent.agentsHelper.agents[reg_no] = {
+							inner_parent.busAgentsHelper.agents[reg_no] = {
 								'name' : reg_no,
 								'routeCode' : route,
 								'platform' : '',
@@ -582,7 +586,7 @@ var BusDataLayer = {
 						lat = parseFloat(lat);
 						lon = parseFloat(lon); //this will still have the ] on the end
 						var p1 = convertCoords(lon,lat,0); //height=0 above earth
-						inner_parent.agentsHelper.vertexList[stn]={ 'x': p1.x, 'y': p1.y, 'z': p1.z};
+						inner_parent.busAgentsHelper.vertexList[stn]={ 'x': p1.x, 'y': p1.y, 'z': p1.z};
 					}
 				}
 			}(this)
