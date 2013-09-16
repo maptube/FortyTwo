@@ -147,8 +147,10 @@ function init() {
 	//loadBuses();
 	
 	//initialisation: add data layers here
-	dataLayers.push(Object.create(TubeDataLayer));
-	dataLayers.push(Object.create(BusDataLayer));
+	//dataLayers.push(Object.create(TubeDataLayer));
+	dataLayers.push(new TubeDataLayer());
+	//dataLayers.push(Object.create(BusDataLayer));
+	dataLayers.push(new BusDataLayer());
 	//dataLayers.push(Object.create(MetoDataPointLayer));
 	//dataLayers.push(Object.create(StaticDataLayer).setURL('data/TQ_Building_530000_180000_CARTESIAN.DAE'));
 	var river = Object.create(StaticDataLayer);
