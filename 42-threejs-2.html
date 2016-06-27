@@ -18,8 +18,10 @@
 
 <!--<script type="text/javascript" src="js/three.min.js"></script>-->
 <script type="text/javascript" src="js/three.js"></script>
-<script type="text/javascript" src="jQuery/includes/1.6/jquery-1.6.1.min.js"></script>
-<script type="text/javascript" src="jQuery/includes/jquery.csv-0.61.min.js"></script>
+<!--<script type="text/javascript" src="jQuery/includes/1.6/jquery-1.6.1.min.js"></script>-->
+<!--<script type="text/javascript" src="jQuery/includes/jquery.csv-0.61.min.js"></script>-->
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/2.2.4/jquery.min.js"></script>
+<script type="text/javascript" src="js/jquery.csv-0.61.min.js"></script>
 <!--<script type="text/javascript" src="42-datalayer.js"></script>-->
 <script type="text/javascript" src="42-agents.js"></script>
 <script type="text/javascript" src="42-tfl.js"></script>
@@ -65,8 +67,8 @@ var earthDragRotation = new THREE.Vector3(); //earth rotation at the point when 
 var clock = new THREE.Clock();
 
 /** Collision detection globals */
-var projector = new THREE.Projector();
-
+//var projector = new THREE.Projector(); //obsolete
+var raycaster = new THREE.Raycaster();
 
 var windowHalfX = window.innerWidth / 2;
 var windowHalfY = window.innerHeight / 2;
@@ -147,10 +149,8 @@ function init() {
 	//loadBuses();
 	
 	//initialisation: add data layers here
-	//dataLayers.push(Object.create(TubeDataLayer));
-	dataLayers.push(new TubeDataLayer());
-	//dataLayers.push(Object.create(BusDataLayer));
-	dataLayers.push(new BusDataLayer());
+	dataLayers.push(Object.create(TubeDataLayer));
+	dataLayers.push(Object.create(BusDataLayer));
 	//dataLayers.push(Object.create(MetoDataPointLayer));
 	//dataLayers.push(Object.create(StaticDataLayer).setURL('data/TQ_Building_530000_180000_CARTESIAN.DAE'));
 	var river = Object.create(StaticDataLayer);
@@ -309,10 +309,11 @@ function onDocumentMouseDown(event) {
 		-(event.clientY/window.innerHeight)*2+1,
 		0.5
 	);
-	projector.unprojectVector( vector, camera );
+	//projector.unprojectVector( vector, camera ); //obsolete
 	
 	//check for intersection with tube objects - maybe we could do this better?
-	var raycaster = new THREE.Raycaster( camera.position, vector.sub( camera.position ).normalize() );
+	//var raycaster = new THREE.Raycaster( camera.position, vector.sub( camera.position ).normalize() );
+	raycaster.set( camera.position, vector.sub( camera.position ).normalize() );
 	var intersectsTubes = raycaster.intersectObjects(earth.children,true); //true=recurse
 	if (intersectsTubes.length>0) {
 		//console.log(intersectsTubes);
