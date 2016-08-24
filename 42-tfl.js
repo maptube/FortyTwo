@@ -158,7 +158,7 @@ TubeDataLayer.prototype.lineCodeToColour = function(c) {
 		case 'N': return lineNColour; //Northern
 		case 'P': return linePColour; //Piccadilly
 		case 'V': return lineVColour; //Victoria
-		case "W": return lineWColour; //Waterloo and City
+		case 'W': return lineWColour; //Waterloo and City
 		default: return 0xffffff; //white
 	}
 };
@@ -404,11 +404,25 @@ function BusDataLayer() {
 		[  0.01,  0.01, -0.01 ]
 	];
 	
+	this.cubeFaces = [
+		[0,4,7],
+		[0,7,3],
+		[1,5,4],
+		[1,4,0],
+		[2,6,5],
+		[2,5,1],
+		[3,7,6],
+		[3,6,2],
+		[4,5,6],
+		[4,6,7]
+	];
+	
 	/**
 	* Load bus positions from countdown csv datafile
 	* The new RouteMaster is 11.23m long, 2.52m wide and 4.39m high according to Wikipedia
 	*/
 	this.busColour = 0xdc241f; //can you believe there is a TfL colour document defining this?
+	this.boatColour = 0x0000ff; //Boats are blue
 }
 	
 BusDataLayer.prototype.animate = function (earth) {
@@ -451,14 +465,16 @@ BusDataLayer.prototype.load = function (earth,ondataloaded) {
 		function(inner_parent) {
 			return function (csv) {
 				inner_parent.busParent = new THREE.Object3D();
-				var geom = new THREE.Geometry();
-				var v_count=0;
+				var bus_geom = new THREE.Geometry();
+				var boat_geom = new THREE.Geometry();
+				var v_count_bus=0, v_count_boat=0;
 				inner_parent.bbox = null;
 				var data = $.csv2Array(csv);
 				for (var i = 1; i < data.length; i++) { //skip header line
 					var lat = data[i][5], lon = data[i][6], bearing = parseFloat(data[i][9]);
 					var reg_no = data[i][3]; //unique ID
-					var route = data[i][0]; //bus number (check this?)
+					var route = data[i][0]; //bus number (i.e. number 74, or RB1 (etc) for a River Service)
+					var isBoat = ((route)&&(route.indexOf("RB")==0));
 					var timeToStation = parseFloat(data[i][11]);
 					var runlink = parseInt(data[i][12]);
 					var fromStation = data[i][14];
@@ -483,32 +499,55 @@ BusDataLayer.prototype.load = function (earth,ondataloaded) {
 						//new code - everything is a single geometry - could really do this with arrays
 						var p3d = convertCoords(lon,lat,0);
 						var x=p3d.x/1000.0,y=p3d.y/1000.0,z=p3d.z/1000.0;
-						var v0=new THREE.Vector3(x-0.01,y-0.01,z-0.01);
-						var v1=new THREE.Vector3(x-0.01,y-0.01,z+0.01);
-						var v2=new THREE.Vector3(x+0.01,y-0.01,z+0.01);
-						var v3=new THREE.Vector3(x+0.01,y-0.01,z-0.01);
-						var v4=new THREE.Vector3(x-0.01,y+0.01,z-0.01);
-						var v5=new THREE.Vector3(x-0.01,y+0.01,z+0.01);
-						var v6=new THREE.Vector3(x+0.01,y+0.01,z+0.01);
-						var v7=new THREE.Vector3(x+0.01,y+0.01,z-0.01);
-						geom.vertices.push(v0);
-						geom.vertices.push(v1);
-						geom.vertices.push(v2);
-						geom.vertices.push(v3);
-						geom.vertices.push(v4);
-						geom.vertices.push(v5);
-						geom.vertices.push(v6);
-						geom.vertices.push(v7);
-						geom.faces.push(new THREE.Face3(v_count,v_count+4,v_count+7));
-						geom.faces.push(new THREE.Face3(v_count,v_count+7,v_count+3));
-						geom.faces.push(new THREE.Face3(v_count+1,v_count+5,v_count+4));
-						geom.faces.push(new THREE.Face3(v_count+1,v_count+4,v_count+0));
-						geom.faces.push(new THREE.Face3(v_count+2,v_count+6,v_count+5));
-						geom.faces.push(new THREE.Face3(v_count+2,v_count+5,v_count+1));
-						geom.faces.push(new THREE.Face3(v_count+3,v_count+7,v_count+6));
-						geom.faces.push(new THREE.Face3(v_count+3,v_count+6,v_count+2));
-						geom.faces.push(new THREE.Face3(v_count+4,v_count+5,v_count+6));
-						geom.faces.push(new THREE.Face3(v_count+4,v_count+6,v_count+7));
+						//var v0=new THREE.Vector3(x-0.01,y-0.01,z-0.01);
+						//var v1=new THREE.Vector3(x-0.01,y-0.01,z+0.01);
+						//var v2=new THREE.Vector3(x+0.01,y-0.01,z+0.01);
+						//var v3=new THREE.Vector3(x+0.01,y-0.01,z-0.01);
+						//var v4=new THREE.Vector3(x-0.01,y+0.01,z-0.01);
+						//var v5=new THREE.Vector3(x-0.01,y+0.01,z+0.01);
+						//var v6=new THREE.Vector3(x+0.01,y+0.01,z+0.01);
+						//var v7=new THREE.Vector3(x+0.01,y+0.01,z-0.01);
+						if (isBoat) {
+							//vertices
+							for (var j=0; j<inner_parent.cubeGeom.length; j++) {
+								var v = new THREE.Vector3(x+inner_parent.cubeGeom[j][0],y+inner_parent.cubeGeom[j][1],z+inner_parent.cubeGeom[j][2]);
+								boat_geom.vertices.push(v);
+							}
+							//faces
+							for (var j=0; j<inner_parent.cubeFaces.length; j++) {
+								boat_geom.faces.push(new THREE.Face3(v_count_boat+inner_parent.cubeFaces[j][0],v_count_boat+inner_parent.cubeFaces[j][1],v_count_boat+inner_parent.cubeFaces[j][2])); //assumes tri faces
+							}
+						}
+						else {
+							//bus_geom.vertices.push(v0);
+							//bus_geom.vertices.push(v1);
+							//bus_geom.vertices.push(v2);
+							//bus_geom.vertices.push(v3);
+							//bus_geom.vertices.push(v4);
+							//bus_geom.vertices.push(v5);
+							//bus_geom.vertices.push(v6);
+							//bus_geom.vertices.push(v7);
+							//bus_geom.faces.push(new THREE.Face3(v_count,v_count+4,v_count+7));
+							//bus_geom.faces.push(new THREE.Face3(v_count,v_count+7,v_count+3));
+							//bus_geom.faces.push(new THREE.Face3(v_count+1,v_count+5,v_count+4));
+							//bus_geom.faces.push(new THREE.Face3(v_count+1,v_count+4,v_count+0));
+							//bus_geom.faces.push(new THREE.Face3(v_count+2,v_count+6,v_count+5));
+							//bus_geom.faces.push(new THREE.Face3(v_count+2,v_count+5,v_count+1));
+							//bus_geom.faces.push(new THREE.Face3(v_count+3,v_count+7,v_count+6));
+							//bus_geom.faces.push(new THREE.Face3(v_count+3,v_count+6,v_count+2));
+							//bus_geom.faces.push(new THREE.Face3(v_count+4,v_count+5,v_count+6));
+							//bus_geom.faces.push(new THREE.Face3(v_count+4,v_count+6,v_count+7));
+							
+							//vertices
+							for (var j=0; j<inner_parent.cubeGeom.length; j++) {
+								var v = new THREE.Vector3(x+inner_parent.cubeGeom[j][0],y+inner_parent.cubeGeom[j][1],z+inner_parent.cubeGeom[j][2]);
+								bus_geom.vertices.push(v);
+							}
+							//faces
+							for (var j=0; j<inner_parent.cubeFaces.length; j++) {
+								bus_geom.faces.push(new THREE.Face3(v_count_bus+inner_parent.cubeFaces[j][0],v_count_bus+inner_parent.cubeFaces[j][1],v_count_bus+inner_parent.cubeFaces[j][2])); //assumes tri faces
+							}
+						}
 						inner_parent.busAgentsHelper.agents[reg_no] = {
 							'name' : reg_no,
 							'routeCode' : route,
@@ -518,12 +557,15 @@ BusDataLayer.prototype.load = function (earth,ondataloaded) {
 							'timeToStation' : timeToStation,
 							'forward' : new THREE.Vector3(),
 							'position' : p3d,
-							'vindex' : v_count,	//add this as needed to move points in mesh
+							'vindex' : (isBoat) ? v_count_boat : v_count_bus,	//add this as needed to move points in mesh
 							'fromStation' : fromStation,
 							'toStation' : toStation,
 							'runlink' : runlink
 						};
-						v_count+=8;
+						if (isBoat) 
+							v_count_boat+=inner_parent.cubeGeom.length;
+						else
+							v_count_bus+=inner_parent.cubeGeom.length;
 							
 						//removed this for compound geom
 						//I need to set the bbox from the centre point like this, as getCompoundBoundingBox doesn't seem to add the centres (i.e. it's always [0.1,0.1,0.1] [-0.1,-0.1,-0.1]) - why?
@@ -535,12 +577,24 @@ BusDataLayer.prototype.load = function (earth,ondataloaded) {
 						//}
 					}
 				}
-				geom.computeFaceNormals();
+				console.log("Number of boat geoms: ",v_count_boat);
+				bus_geom.computeFaceNormals();
+				boat_geom.computeFaceNormals();
+				//add the buses
 				inner_parent.busParent.add(
 					new THREE.Mesh(
-						geom,
+						bus_geom,
 						//new THREE.MeshBasicMaterial( { color: inner_parent.busColour, wireframe: false }
 						new THREE.MeshLambertMaterial( {color: inner_parent.busColour, ambient: inner_parent.busColour, reflectivity: 0.65, wireframe: false }
+						)
+					)
+				);
+				//and add the boats
+				inner_parent.busParent.add(
+					new THREE.Mesh(
+						boat_geom,
+						//new THREE.MeshBasicMaterial( { color: inner_parent.busColour, wireframe: false }
+						new THREE.MeshLambertMaterial( {color: inner_parent.boatColour, ambient: inner_parent.boatColour, reflectivity: 0.65, wireframe: false }
 						)
 					)
 				);
